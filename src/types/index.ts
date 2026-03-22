@@ -1,0 +1,130 @@
+// --- Synthesis Output ---
+
+/**
+ * Phoneme-level timing metadata from Piper.
+ */
+export interface PiperMetadata {
+	phonemeIds: number[];
+	phonemes?: string[];
+	durations: number[];
+	totalAudioDurationMs: number;
+	sampleRate: number;
+	hopSize: number;
+	phonemeIdMap?: Record<string, number[]>;
+}
+
+/**
+ * Result of a single synthesis request.
+ */
+export interface AudioSynthesisResult {
+	audioData: Float32Array;
+	sampleRate: number;
+	durationMs: number;
+	metadata?: {
+		generationTimeMs?: number;
+	} & Partial<PiperMetadata>;
+}
+
+/**
+ * Pending request in the Piper worker farm.
+ */
+export interface PendingRequest {
+	requestId: string;
+	text: string;
+	speed: number;
+	pitch: number;
+	volume: number;
+	resolve: (result: AudioSynthesisResult & { callbackResult?: any }) => void;
+	reject: (reason: Error) => void;
+	// If completed but waiting for FIFO order
+	result?: AudioSynthesisResult & { callbackResult?: any };
+}
+
+/**
+ * State of a Piper worker instance.
+ */
+export interface WorkerState {
+	id: number;
+	worker: Worker;
+	type: "cpu" | "webgpu";
+	busy: boolean;
+}
+
+/**
+ * Configuration for the worker-thread callback module.
+ */
+export interface CallbackModuleConfig {
+  /** Path to the JavaScript module to import in the worker. */
+  path: string;
+  /** Name of the exported function to invoke on synthesis completion. */
+  functionName: string;
+}
+
+/**
+ * Configuration for initializing the Piper farm.
+ */
+export interface FarmConfig {
+	voiceId: string;
+	modelId: string;
+	wasmPaths: {
+		onnxWasm: string;
+		piperData: string;
+		piperWasm: string;
+	};
+	cpuInstances: number;
+	webgpuInstances: number;
+  /** Optional worker-thread callback for off-thread processing. */
+  callbackModule?: CallbackModuleConfig;
+}
+
+export interface PiperWorkerFarm {
+	init(config: FarmConfig): Promise<void>;
+	synthesize(
+		text: string,
+		options?: { speed?: number; pitch?: number; volume?: number }
+	): Promise<AudioSynthesisResult & { callbackResult?: any }>;
+	terminate(): void;
+	readonly metrics: {
+		queueLength: number;
+		busyWorkers: number;
+		totalWorkers: number;
+	};
+}
+
+export type PiperWorkerConfig = {
+	voiceId: string;
+	modelId: string;
+	wasmPaths: {
+		onnxWasm: string;
+		piperData: string;
+		piperWasm: string;
+	};
+	device?: "cpu" | "webgpu";
+	instanceId?: number;
+  /** Optional callback to load in worker thread. */
+  callbackModule?: CallbackModuleConfig;
+};
+
+export type PiperWorkerMessageIn =
+	| { type: "init"; config: PiperWorkerConfig }
+  | { type: "load-callback"; modulePath: string; functionName: string }
+	| {
+			type: "synthesize";
+			text: string;
+			requestId: string;
+			speed?: number;
+			pitch?: number;
+			volume?: number;
+	  };
+
+export type PiperWorkerMessageOut =
+	| { type: "ready"; instanceId: number }
+	| { type: "error"; instanceId: number; error: string; originalRequest?: PiperWorkerMessageIn }
+	| { type: "success"; requestId: string; result: AudioSynthesisResult; callbackResult?: any };
+
+export interface PiperModelConfig {
+	audio: { sample_rate: number };
+	espeak: { voice: string };
+	inference: { noise_scale: number; length_scale: number; noise_w: number };
+	speaker_id_map: Record<string, number>;
+}
