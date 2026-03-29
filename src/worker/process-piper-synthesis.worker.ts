@@ -21,6 +21,7 @@ let phonemizerModule: PiperPhonemizerModule | null = null;
 let modelConfig: ModelConfig | null = null;
 let instanceId = -1;
 let deviceLabel = "UNKNOWN";
+let currentModelId = "";
 
 /** User-defined callback function loaded into the worker global scope. */
 let userCallback: ((result: AudioSynthesisResult) => any) | null = null;
@@ -65,11 +66,12 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
 
 // --- Initialization ---
 async function handleInit(config: PiperWorkerConfig) {
-  const { voiceId, modelId, wasmPaths, device, instanceId: id, callbackModule } = config;
+  const { voiceId, modelId, onnxRuntimePaths, piperPaths, device, instanceId: id, callbackModule } = config;
   instanceId = id || 0;
   deviceLabel = (device || "cpu").toUpperCase();
+  currentModelId = modelId;
 
-  log("=== INIT START ===");
+  log(`=== INIT START [${modelId}] ===`);
   
   try {
     // 1. Load context from OPFS
@@ -87,14 +89,23 @@ async function handleInit(config: PiperWorkerConfig) {
     const modelBuffer = await modelFile.arrayBuffer();
 
     // 2. Configure ORT
-    ort.env.wasm.wasmPaths = wasmPaths.onnxWasm;
-    ortSession = await ort.InferenceSession.create(modelBuffer, {
+    // We use dynamic import for the MJS bundle to ensure the environment is correctly set up
+    // in the worker thread.
+    const ortModule = await import(/* @vite-ignore */ onnxRuntimePaths.mjs);
+    const ortInstance = ortModule.default || ortModule;
+    
+    if (!ortInstance.env) {
+      throw new Error("Invalid ONNX Runtime module: 'env' is missing. Check if the .mjs URL is correct.");
+    }
+
+    ortInstance.env.wasm.wasmPaths = onnxRuntimePaths.wasm;
+    ortSession = await ortInstance.InferenceSession.create(modelBuffer, {
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all"
     });
 
     // 3. Load Phonemizer
-    await loadPhonemizerModule(wasmPaths);
+    await loadPhonemizerModule(piperPaths);
 
     // 4. Load Callback if configured
     if (callbackModule) {
@@ -157,6 +168,7 @@ async function handleSynthesize(
     durationMs,
     metadata: {
       generationTimeMs,
+      modelId: currentModelId, // Inject modelId for traceability
       phonemeIds,
       phonemes,
       durations: durations ? Array.from(durations) : undefined,
@@ -179,7 +191,7 @@ async function handleSynthesize(
   ];
 
   postMessage(
-    { type: "success", requestId, result, callbackResult },
+    { type: "success", instanceId, requestId, result, callbackResult },
     { transfer: transferables }
   );
 }
@@ -188,17 +200,19 @@ async function handleSynthesize(
 
 let lastPhonemizerOutput: PhonemizerOutput | null = null;
 
-async function loadPhonemizerModule(wasmPaths: PiperWorkerConfig["wasmPaths"]) {
-  const glueUrl = wasmPaths.piperWasm.replace(".wasm", ".js");
+async function loadPhonemizerModule(piperPaths: PiperWorkerConfig["piperPaths"]) {
+  // The phonemizer glue JS is served alongside the WASM
+  const glueUrl = piperPaths.piperJs;
   const response = await fetch(glueUrl);
   const glueCode = await response.text();
   
+  // Create module using the legacy global-variable approach commonly used by Emscripten
   const createModule = new Function(glueCode + "; return createPiperPhonemize;")();
   
   phonemizerModule = await createModule({
     locateFile: (path: string) => {
-      if (path.endsWith(".wasm")) return wasmPaths.piperWasm;
-      if (path.endsWith(".data")) return wasmPaths.piperData;
+      if (path.endsWith(".wasm")) return piperPaths.piperWasm;
+      if (path.endsWith(".data")) return piperPaths.piperData;
       return path;
     },
     print: (text: string) => {
@@ -215,10 +229,12 @@ function phonemize(text: string, voice: string) {
   
   phonemizerModule?.callMain(["-l", voice, "--input", input, "--espeak_data", "/espeak-ng-data"]);
   
-  if (lastPhonemizerOutput?.phoneme_ids) {
+  // Use type casting to resolve type inference issues during synchronous Emscripten callback
+  if ((lastPhonemizerOutput as any)?.phoneme_ids) {
+    const output = lastPhonemizerOutput as unknown as PhonemizerOutput;
     return {
-      phonemeIds: lastPhonemizerOutput.phoneme_ids,
-      phonemes: lastPhonemizerOutput.phonemes || []
+      phonemeIds: output.phoneme_ids,
+      phonemes: output.phonemes || []
     };
   }
   throw new Error("Phonemization failed");

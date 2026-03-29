@@ -6,11 +6,13 @@
 export interface PiperMetadata {
 	phonemeIds: number[];
 	phonemes?: string[];
-	durations: number[];
+	durations?: number[];
 	totalAudioDurationMs: number;
 	sampleRate: number;
 	hopSize: number;
 	phonemeIdMap?: Record<string, number[]>;
+  /** The ID of the model used for this specific result. */
+  modelId?: string;
 }
 
 /**
@@ -20,8 +22,9 @@ export interface AudioSynthesisResult {
 	audioData: Float32Array;
 	sampleRate: number;
 	durationMs: number;
-	metadata?: {
+	metadata: {
 		generationTimeMs?: number;
+    modelId?: string;
 	} & Partial<PiperMetadata>;
 }
 
@@ -48,6 +51,8 @@ export interface WorkerState {
 	worker: Worker;
 	type: "cpu" | "webgpu";
 	busy: boolean;
+  transitioning?: boolean;
+  modelId?: string;
 }
 
 /**
@@ -61,16 +66,49 @@ export interface CallbackModuleConfig {
 }
 
 /**
+ * Asset paths for ONNX Runtime.
+ */
+export interface OnnxRuntimePaths {
+  wasm: string;
+  mjs: string;
+}
+
+/**
+ * Asset paths for Piper specific WASM/Data.
+ */
+export interface PiperPaths {
+  piperWasm: string;
+  piperJs: string;
+  piperData: string;
+}
+
+/**
+ * Internal worker configuration.
+ */
+export interface PiperWorkerConfig {
+	voiceId: string;
+	modelId: string;
+	onnxRuntimePaths: OnnxRuntimePaths;
+	piperPaths: PiperPaths;
+	device?: "cpu" | "webgpu";
+	instanceId?: number;
+  /** Optional callback to load in worker thread. */
+  callbackModule?: CallbackModuleConfig;
+}
+
+/**
  * Configuration for initializing the Piper farm.
  */
 export interface FarmConfig {
 	voiceId: string;
 	modelId: string;
-	wasmPaths: {
-		onnxWasm: string;
-		piperData: string;
-		piperWasm: string;
-	};
+  /** Optional URLs for the ONNX model and config. */
+  modelUrls?: {
+    onnx: string;
+    config: string;
+  };
+	onnxRuntimePaths?: OnnxRuntimePaths;
+	piperPaths?: PiperPaths;
 	cpuInstances: number;
 	webgpuInstances: number;
   /** Optional worker-thread callback for off-thread processing. */
@@ -79,31 +117,25 @@ export interface FarmConfig {
 
 export interface PiperWorkerFarm {
 	init(config: FarmConfig): Promise<void>;
+  /** 
+   * Updates the farm with a new model configuration without 
+   * destroying workers or clearing the queue. 
+   */
+  reinit(config: Pick<FarmConfig, 'voiceId' | 'modelId' | 'modelUrls'>): Promise<void>;
 	synthesize(
 		text: string,
 		options?: { speed?: number; pitch?: number; volume?: number }
 	): Promise<AudioSynthesisResult & { callbackResult?: any }>;
 	terminate(): void;
+  isInitialized(): boolean;
+  getActiveModelId(): string | null;
+  prepareTransition(): void;
 	readonly metrics: {
 		queueLength: number;
 		busyWorkers: number;
 		totalWorkers: number;
 	};
 }
-
-export type PiperWorkerConfig = {
-	voiceId: string;
-	modelId: string;
-	wasmPaths: {
-		onnxWasm: string;
-		piperData: string;
-		piperWasm: string;
-	};
-	device?: "cpu" | "webgpu";
-	instanceId?: number;
-  /** Optional callback to load in worker thread. */
-  callbackModule?: CallbackModuleConfig;
-};
 
 export type PiperWorkerMessageIn =
 	| { type: "init"; config: PiperWorkerConfig }
@@ -120,7 +152,7 @@ export type PiperWorkerMessageIn =
 export type PiperWorkerMessageOut =
 	| { type: "ready"; instanceId: number }
 	| { type: "error"; instanceId: number; error: string; originalRequest?: PiperWorkerMessageIn }
-	| { type: "success"; requestId: string; result: AudioSynthesisResult; callbackResult?: any };
+	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: any };
 
 export interface PiperModelConfig {
 	audio: { sample_rate: number };

@@ -1,4 +1,9 @@
 node_modules
+dist
+tmp
+public/assets
+public/wasm
+src/worker/assets
 
 # Output
 .output

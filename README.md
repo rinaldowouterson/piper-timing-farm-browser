@@ -1,81 +1,83 @@
-# piper-timing-farm
+# 🎙️ Piper Timing Farm
 
-A framework-agnostic Piper TTS worker farm for the browser, enhanced with worker-thread callbacks for zero-latency lipsync and timing-aware processing.
+High-performance, multi-threaded Piper TTS engine for the browser. Features framework-agnostic worker orchestration, Parallel FIFO sequencing, and **"Asshole-Proof"** model switching.
 
-## 🚀 Why Use This?
+[![Release](https://img.shields.io/npm/v/piper-timing-farm)](https://www.npmjs.com/package/piper-timing-farm)
+[![License](https://img.shields.io/npm/l/piper-timing-farm)](https://github.com/rinaldo/piper-timing-farm/blob/main/LICENSE)
 
-Typical TTS libraries only provide audio data back to the main thread, forcing heavy post-processing (like lipsync calculation) to run on the main thread, causing frames to drop.
+---
 
-`piper-timing-farm` allows you to:
-1. **Inject processing into the Worker thread**: Run your own code exactly where the audio is generated.
-2. **Zero main-thread blocking**: Perform heavy phoneme-to-animation calculations off-thread.
-3. **Zero-copy transfer**: Automatically transfer processed results (like viseme tracks) for maximum performance.
+## 🚀 The "Whole Nine Yards" Architecture
 
-## 📦 Installation
+`piper-timing-farm` is built for production-grade web applications where audio-visual synchronization (lipsync) and zero main-thread-blocking are non-negotiable.
 
+-   **Parallel FIFO Sequencer**: Guarantees that synthesis results are returned in the exact order they were requested, even when processed across multiple concurrent workers.
+-   **Asshole-Proof Provider**: Background model switching allow you to hotswap voices while the engine continues to synthesize with the active model. Asset provisioning is deferred until the new model is fully downloaded.
+-   **Unified CLI**: Automated **G**lobal **O**rchestration over **A**sset **T**ransfers for Vite, SvelteKit, and Next.js.
+
+---
+
+## 📦 Installation & Setup
+
+### 1. Install the Library
 ```bash
 npm install piper-timing-farm
 ```
 
-## 🛠️ Basic Usage
+### 2. Provision Assets (The Magic Wand)
+WASM and binary assets must be served from your project's static folder. Our CLI handles this for you:
+```bash
+npx piper-farm init
+```
+*Detects SvelteKit (`static/assets`) vs. Vite/React (`public/assets`) automatically.*
 
+---
+
+## 🛠️ Usage Strategies
+
+### Option A: The CDN Path (Zero friction)
+Use our pre-configured CDN path for zero-config integration.
+```typescript
+import { createPiperProvider } from 'piper-timing-farm';
+
+const provider = createPiperProvider();
+await provider.init({
+  voiceId: 'en_US-amy-medium',
+  modelId: 'en_US-amy-medium'
+});
+
+const result = await provider.synthesize('Hello from the CDN!');
+```
+
+### Option B: The Local Path (Performance & Offline)
+Use your locally provisioned assets for maximum performance and offline support.
 ```typescript
 import { createPiperWorkerFarm } from 'piper-timing-farm';
 
 const farm = createPiperWorkerFarm();
-
 await farm.init({
-  voiceId: 'en_US-amy-medium',
-  modelId: 'en_US-amy-medium',
-  wasmPaths: {
-    onnxWasm: '/wasm/ort/',
-    piperData: '/wasm/ort/piper_phonemize.data',
-    piperWasm: '/wasm/ort/piper_phonemize.wasm'
-  },
-  cpuInstances: 2,
-  webgpuInstances: 0
+  voiceId: 'uk_UA-ukrainian_tts-medium',
+  modelId: 'uk_UA-ukrainian_tts-medium'
 });
 
-const result = await farm.synthesize('Hello world');
-console.log(result.audioData); // Float32Array
+const result = await farm.synthesize('Слава Україні!');
 ```
 
-## ⚡ Technical Enhancement: Worker-Thread Callbacks
+---
 
-For lipsync and animation, load a module directly into the worker:
+## ⚡ Worker-Thread Callbacks (Lipsync)
+Perform heavy phoneme processing off-thread by injecting a module into the synthesis loop:
 
 ```typescript
 await farm.init({
-  // ... other config
   callbackModule: {
-    path: '/js/my-lipsync-callback.js',
-    functionName: 'onSynthesisComplete'
+    path: '/js/my-viseme-processor.js',
+    functionName: 'processVisemes'
   }
 });
-
-const result = await farm.synthesize('Hello world');
-console.log(result.callbackResult); // Your processed tracks!
 ```
 
-**Worker Module (`/js/my-lipsync-callback.js`):**
-
-```javascript
-export function onSynthesisComplete(result) {
-  const { metadata, audioData } = result;
-  // Calculate viseme tracks here, in the worker thread...
-  const tracks = computeLipsync(metadata.phonemes, metadata.durations);
-  // Return any buffers for zero-copy transfer
-  return { tracks };
-}
-```
-
-## 🧠 Core Features
-
-- **Portability**: Framework-agnostic (no Svelte/React dependencies).
-- **FIFO Sequencing**: Results arrive in the exact order they were requested.
-- **OPFS Caching**: Built-in provider handle model persistence in Origin-Private File System.
-- **Timing Metadata**: Full access to Piper's phoneme IDs, strings, and duration tensors.
+---
 
 ## ⚖️ License
-
-MIT
+MIT © Rinaldo Wouterson

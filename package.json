@@ -6,6 +6,9 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "piper-farm": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -14,6 +17,10 @@
     "./worker": {
       "import": "./dist/worker.js",
       "types": "./dist/worker/index.d.ts"
+    },
+    "./cdn": {
+      "import": "./dist/index-cdn.js",
+      "types": "./dist/index-cdn.d.ts"
     }
   },
   "files": [
@@ -23,19 +30,23 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "vite build && tsc",
+    "build": "rm -rf dist && vite build && tsc --emitDeclarationOnly",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run --config .test/vitest.config.ts",
+    "test:vitals": "vitest run .test/vitals.test.ts --config .test/vitest.config.ts",
+    "postinstall": "mkdir -p public/assets && cp node_modules/onnxruntime-web/dist/*.wasm public/assets/ && cp node_modules/onnxruntime-web/dist/*.mjs public/assets/ && cp src/worker/assets/* public/assets/ || true"
   },
   "dependencies": {
-    "onnxruntime-web": "^1.24.3"
+    "onnxruntime-web": "^1.24.3",
+    "vite-plugin-static-copy": "^4.0.0"
   },
   "author": "Rinaldo Wouterson",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "typescript": "^5.9.3",
-    "vite": "^5.4.21",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.3",
     "vitest": "^1.6.1"
   }
 }

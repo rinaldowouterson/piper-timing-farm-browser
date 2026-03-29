@@ -1,23 +1,25 @@
-/**
- * Recursively collects all ArrayBuffers from an object.
- * Used for zero-copy transfer of Float32Arrays between worker and main thread.
- */
-export function collectTransferables(obj: unknown): ArrayBuffer[] {
-  const buffers: ArrayBuffer[] = [];
+import type { AudioSynthesisResult } from "../types";
 
-  if (obj instanceof ArrayBuffer) {
-    buffers.push(obj);
-  } else if (ArrayBuffer.isView(obj)) {
-    buffers.push(obj.buffer);
-  } else if (Array.isArray(obj)) {
-    for (const item of obj) {
-      buffers.push(...collectTransferables(item));
-    }
-  } else if (obj && typeof obj === 'object') {
-    for (const value of Object.values(obj)) {
-      buffers.push(...collectTransferables(value));
+/**
+ * Helper to collect all Transferable objects from a result.
+ * Supports ArrayBuffer, Uint8Array, Float32Array, and nested objects.
+ */
+export function collectTransferables(val: any): Transferable[] {
+  const result: Transferable[] = [];
+  
+  function walk(obj: any) {
+    if (!obj) return;
+    if (obj instanceof ArrayBuffer) {
+      result.push(obj);
+    } else if (ArrayBuffer.isView(obj)) {
+      result.push(obj.buffer);
+    } else if (typeof obj === 'object') {
+      for (const key in obj) {
+        walk(obj[key]);
+      }
     }
   }
-
-  return buffers;
+  
+  walk(val);
+  return result;
 }

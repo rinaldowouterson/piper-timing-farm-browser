@@ -1,109 +1,157 @@
 import type { 
   PiperWorkerFarm, 
-  AudioSynthesisResult, 
   FarmConfig, 
+  AudioSynthesisResult, 
   PendingRequest, 
-  WorkerState 
-} from '../types';
-import { createSequencer } from './resolve-sequencer';
-import { createWorkerPool } from './control-worker-pool';
+  PiperWorkerMessageOut 
+} from "../types";
+import { createWorkerPool } from "./control-worker-pool";
+import { ONNX_ASSET_URLS } from "../worker/resolve-assets-onnxruntime";
+import { PIPER_ASSET_URLS } from "../worker/resolve-assets-piper";
 
 /**
- * Creates the high-level Piper worker farm.
+ * Creates the high-performance Piper worker farm.
+ * 
+ * Logic:
+ * 1. Tracks multiple workers and distributes synthesis requests.
+ * 2. Implements a Parallel FIFO queue for deterministic synthesis order.
+ * 3. Supports live model re-initialization (reinit).
  */
 export function createPiperWorkerFarm(): PiperWorkerFarm {
-  const sequencer = createSequencer();
-  let initErrors: string[] = [];
+  const queue: PendingRequest[] = [];
+  const processingRequestIds = new Set<string>();
+  const pool = createWorkerPool(onReady, onResult);
+  let isTransitioning = false;
 
-  const handleWorkerMessage = (state: WorkerState, msg: any) => {
-    switch (msg.type) {
-      case "ready":
-        state.busy = false;
-        pool.processQueue();
-        break;
+  function onReady(id: number) {
+    // console.log(`Worker ${id} ready, checking queue...`);
+    processQueue();
+  }
 
-      case "success":
-        state.busy = false;
-        handleSuccess(msg.requestId, msg.result, msg.callbackResult);
-        pool.processQueue();
-        break;
+  function onResult(msg: PiperWorkerMessageOut) {
+    if (msg.type === 'success') {
+      const { requestId, instanceId, result, callbackResult } = msg;
 
-      case "error":
-        state.busy = false;
-        const reqId = msg.requestId;
-        handleError(reqId, msg.error);
-        pool.processQueue();
-        break;
+      // 1. Free the worker (only if not transitioning)
+      const worker = pool.getWorkers().find(w => w.id === instanceId);
+      if (worker && !worker.transitioning) worker.busy = false;
+
+      // 2. Clear processing status
+      processingRequestIds.delete(requestId);
+
+      // 3. Update sequencer
+      const pending = queue.find(r => r.requestId === requestId);
+      if (pending) {
+        pending.result = { ...result, callbackResult };
+        processQueue();
+      }
+    } else if (msg.type === 'error') {
+      const { instanceId, error } = msg;
+      console.error(`Worker ${instanceId} error:`, error);
+      const worker = pool.getWorkers().find(w => w.id === instanceId);
+      if (worker) worker.busy = false;
     }
-  };
+  }
 
-  const pool = createWorkerPool(handleWorkerMessage);
-
-  const handleSuccess = (requestId: string, result: AudioSynthesisResult, callbackResult: any) => {
-    const req = sequencer.find(requestId);
-    if (!req) return;
-
-    req.result = { ...result, callbackResult };
-    sequencer.drain();
-  };
-
-  const handleError = (requestId: string | undefined, error: string) => {
-    if (!requestId) {
-      initErrors.push(error);
-      return;
+  function processQueue() {
+    // 1. Resolve completed FIFO requests
+    while (queue.length > 0 && queue[0].result) {
+      const first = queue.shift()!;
+      first.resolve(first.result as any);
     }
 
-    const req = sequencer.find(requestId);
-    if (req) {
-      req.reject(new Error(error));
-      sequencer.remove(requestId);
+    // 2. Assign pending requests to idle workers (Only if not transitioning)
+    if (isTransitioning) return;
+
+    const nextRequest = queue.find(r => !r.result && !isCurrentlyProcessing(r.requestId));
+    if (nextRequest) {
+      const worker = pool.getNextAvailable();
+      if (worker) {
+        worker.busy = true;
+        processingRequestIds.add(nextRequest.requestId);
+        worker.worker.postMessage({
+          type: 'synthesize',
+          text: nextRequest.text,
+          requestId: nextRequest.requestId,
+          speed: nextRequest.speed,
+          pitch: nextRequest.pitch,
+          volume: nextRequest.volume
+        });
+      }
     }
-  };
+  }
 
-  const init = async (config: FarmConfig) => {
-    initErrors = [];
-    await pool.init(config);
-    if (initErrors.length > 0) {
-      throw new Error(`Worker initialization failed: ${initErrors.join(", ")}`);
-    }
-  };
-
-  const synthesize = (
-    text: string,
-    options: { speed?: number; pitch?: number; volume?: number } = {}
-  ): Promise<AudioSynthesisResult & { callbackResult?: any }> => {
-    const requestId = `req-${Math.random().toString(36).slice(2, 11)}`;
-    const speed = options.speed ?? 1.0;
-    const pitch = options.pitch ?? 1.0;
-    const volume = options.volume ?? 1.0;
-
-    return new Promise((resolve, reject) => {
-      const request: PendingRequest = {
-        requestId,
-        text,
-        speed,
-        pitch,
-        volume,
-        resolve,
-        reject
-      };
-
-      sequencer.push(request);
-      pool.enqueue(request);
-    });
-  };
-
-  const terminate = () => {
-    pool.terminate();
-    sequencer.clear();
-  };
+  function isCurrentlyProcessing(requestId: string) {
+    return processingRequestIds.has(requestId);
+  }
 
   return {
-    init,
-    synthesize,
-    terminate,
+    async init(config: FarmConfig) {
+      // Intelligent Architecture Defaults (Tier 3 FALLBACK)
+      const onnxRuntimePaths = config.onnxRuntimePaths || ONNX_ASSET_URLS;
+      const piperPaths = config.piperPaths || PIPER_ASSET_URLS;
+
+      isTransitioning = true;
+      const piperConfig = {
+        modelId: config.modelId,
+        voiceId: config.voiceId,
+        onnxRuntimePaths,
+        piperPaths,
+        callbackModule: config.callbackModule
+      };
+      await pool.init(piperConfig, config.cpuInstances);
+      isTransitioning = false;
+      processQueue();
+    },
+
+    async reinit(config) {
+      isTransitioning = true;
+      await pool.reinit(config);
+      isTransitioning = false;
+      processQueue();
+    },
+
+    prepareTransition() {
+      isTransitioning = true;
+    },
+
+    synthesize(text, options = {}) {
+      return new Promise((resolve, reject) => {
+        const requestId = crypto.randomUUID();
+        queue.push({
+          requestId,
+          text,
+          speed: options.speed ?? 1.0,
+          pitch: options.pitch ?? 1.0,
+          volume: options.volume ?? 1.0,
+          resolve: (res) => {
+            processingRequestIds.delete(requestId);
+            resolve(res);
+          },
+          reject: (err) => {
+            processingRequestIds.delete(requestId);
+            reject(err);
+          }
+        });
+        processQueue();
+      });
+    },
+
+    terminate() {
+      pool.terminate();
+      queue.length = 0;
+      processingRequestIds.clear();
+    },
+
+    isInitialized: () => pool.isInitialized(),
+    getActiveModelId: () => pool.getActiveModelId(),
+
     get metrics() {
-      return pool.metrics;
+      return {
+        queueLength: queue.length,
+        busyWorkers: pool.getBusyCount(),
+        totalWorkers: pool.getWorkerCount()
+      };
     }
   };
 }

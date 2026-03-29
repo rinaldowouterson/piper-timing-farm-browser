@@ -1,116 +1,114 @@
 import type { 
   WorkerState, 
-  FarmConfig, 
   PiperWorkerMessageIn, 
-  PendingRequest 
-} from '../types';
+  PiperWorkerMessageOut, 
+  PiperWorkerConfig 
+} from "../types";
 
 /**
- * Manages a pool of Web Workers for Piper synthesis.
+ * Worker Pool Controller.
+ * 
+ * Manages the lifecycle and load balancing of a pool of Piper workers.
+ * Ensures that if a worker fails, it's restarted, and manages the 
+ * stateful model re-initialization.
  */
-export function createWorkerPool(
-  onMessage: (state: WorkerState, msg: any) => void
-) {
-  let workers: WorkerState[] = [];
-  let queue: PendingRequest[] = [];
-
-  const spawnWorker = (config: FarmConfig, device: "cpu" | "webgpu", id: number) => {
-    // Relative to the index file in dev, or handled by bundler in production
-    const worker = new Worker(new URL("../worker/process-piper-synthesis.worker.ts", import.meta.url), {
-      type: "module"
-    });
-
-    const state: WorkerState = { id, worker, type: device, busy: true };
-    workers.push(state);
-
-    worker.onmessage = (e: MessageEvent<any>) => {
-      onMessage(state, e.data);
-    };
-
-    const initMsg: PiperWorkerMessageIn = {
-      type: "init",
-      config: {
-        voiceId: config.voiceId,
-        modelId: config.modelId,
-        wasmPaths: config.wasmPaths,
-        device,
-        instanceId: id,
-        callbackModule: config.callbackModule
-      }
-    };
-    worker.postMessage(initMsg);
-  };
-
-  const init = async (config: FarmConfig): Promise<void> => {
-    // Spawn configured number of CPU and WebGPU instances
-    for (let i = 0; i < config.cpuInstances; i++) {
-      spawnWorker(config, "cpu", i);
-    }
-
-    for (let i = 0; i < config.webgpuInstances; i++) {
-      spawnWorker(config, "webgpu", config.cpuInstances + i);
-    }
-
-    // Wait for all workers to signal "ready" or wait for a timeout
-    return new Promise((resolve) => {
-      const check = () => {
-        if (workers.every((w) => !w.busy)) {
-          resolve();
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      check();
-    });
-  };
-
-  const processQueue = () => {
-    const idleWorkers = workers.filter((w) => !w.busy);
-    if (idleWorkers.length === 0 || queue.length === 0) return;
-
-    while (idleWorkers.length > 0 && queue.length > 0) {
-      const worker = idleWorkers.pop()!;
-      const req = queue.shift()!;
-
-      worker.busy = true;
-
-      const msg: PiperWorkerMessageIn = {
-        type: "synthesize",
-        text: req.text,
-        requestId: req.requestId,
-        speed: req.speed,
-        pitch: req.pitch,
-        volume: req.volume
-      };
-
-      worker.worker.postMessage(msg);
-    }
-  };
-
-  const enqueue = (req: PendingRequest) => {
-    queue.push(req);
-    processQueue();
-  };
-
-  const terminate = () => {
-    for (const state of workers) {
-      state.worker.terminate();
-    }
-    workers = [];
-    queue = [];
-  };
+export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: PiperWorkerMessageOut) => void) {
+  const workers: WorkerState[] = [];
+  let isInitialized = false;
+  let activeModelId: string | null = null;
+  let currentConfig: PiperWorkerConfig | null = null;
 
   return {
-    init,
-    enqueue,
-    terminate,
-    processQueue,
-    get metrics() {
-      return {
-        queueLength: queue.length,
-        busyWorkers: workers.filter((w) => w.busy).length,
-        totalWorkers: workers.length
-      };
-    }
+    async init(config: PiperWorkerConfig, count: number) {
+      currentConfig = config;
+      activeModelId = config.modelId;
+      isInitialized = true;
+
+      const initPromises = [];
+      for (let i = 0; i < count; i++) {
+        const worker = createWorker(i, config, (msg) => {
+          if (msg.type === 'ready') onReady(msg.instanceId);
+          else onResult(msg);
+        });
+        workers.push(worker);
+        initPromises.push(new Promise<void>(res => {
+          const handler = (e: MessageEvent) => {
+            if (e.data.type === 'ready' && e.data.instanceId === i) {
+              worker.worker.removeEventListener('message', handler);
+              res();
+            }
+          };
+          worker.worker.addEventListener('message', handler);
+        }));
+      }
+      await Promise.all(initPromises);
+    },
+
+    /**
+     * Re-initializes all workers in the pool with a new model.
+     * Keeps the workers alive and the request queue intact.
+     */
+    async reinit(config: Partial<PiperWorkerConfig>) {
+      if (!currentConfig) throw new Error("Pool not initialized");
+      
+      const newConfig = { ...currentConfig, ...config };
+      currentConfig = newConfig;
+      activeModelId = newConfig.modelId;
+
+      const reinitPromises = workers.map(w => {
+        w.transitioning = true; // Hard-lock during transition
+        w.busy = true; 
+        return new Promise<void>(res => {
+          const handler = (e: MessageEvent) => {
+            if (e.data.type === 'ready' && e.data.instanceId === w.id) {
+              w.worker.removeEventListener('message', handler);
+              w.modelId = activeModelId!;
+              w.transitioning = false; // Release transition lock
+              w.busy = false;          // Release activity lock
+              res();
+            }
+          };
+          w.worker.addEventListener('message', handler);
+          w.worker.postMessage({ type: 'init', config: { ...newConfig, instanceId: w.id } });
+        });
+      });
+      await Promise.all(reinitPromises);
+    },
+
+    getNextAvailable(): WorkerState | null {
+      return workers.find(w => !w.busy && !w.transitioning) || null;
+    },
+
+    terminate() {
+      workers.forEach(w => w.worker.terminate());
+      workers.length = 0;
+      isInitialized = false;
+      activeModelId = null;
+    },
+
+    isInitialized: () => isInitialized,
+    getActiveModelId: () => activeModelId,
+    getWorkerCount: () => workers.length,
+    getBusyCount: () => workers.filter(w => w.busy).length,
+    getWorkers: () => workers
   };
+}
+
+function createWorker(id: number, config: PiperWorkerConfig, onMessage: (msg: PiperWorkerMessageOut) => void): WorkerState {
+  // Use Vite-safe worker instantiation if possible, otherwise use new URL
+  const worker = new Worker(new URL("../worker/process-piper-synthesis.worker.ts", import.meta.url), {
+    type: "module",
+    /* @vite-ignore */
+    name: `PiperWorker-${id}`
+  });
+
+  worker.onmessage = (e: MessageEvent<PiperWorkerMessageOut>) => onMessage(e.data);
+  worker.onerror = (e) => {
+    console.error(`Worker ${id} error:`, e);
+    onMessage({ type: "error", instanceId: id, error: "Worker crashed" });
+  };
+
+  worker.postMessage({ type: "init", config: { ...config, instanceId: id } });
+
+  return { id, worker, type: config.device || "cpu", busy: false, modelId: config.modelId };
 }
