@@ -16,11 +16,13 @@ export default defineConfig({
       targets: [
         {
           src: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-          dest: 'wasm/ort'
+          dest: 'wasm/ort',
+          rename: { stripBase: 3 }
         },
         {
           src: 'node_modules/onnxruntime-web/dist/ort.wasm.min.mjs',
-          dest: 'wasm/ort'
+          dest: 'wasm/ort',
+          rename: { stripBase: 3 }
         },
         {
           // CLEAN FLATTENING: Use stripBase to remove 'src/worker/assets/' prefix
