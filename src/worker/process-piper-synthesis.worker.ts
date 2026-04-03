@@ -21,7 +21,7 @@ let ortInstance: any = null;
 let phonemizerModule: PiperPhonemizerModule | null = null;
 let modelConfig: ModelConfig | null = null;
 let instanceId = -1;
-let deviceLabel = "UNKNOWN";
+let deviceLabel = "CPU";
 let currentModelId = "";
 
 /** User-defined callback function loaded into the worker global scope. */
@@ -67,9 +67,8 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
 
 // --- Initialization ---
 async function handleInit(config: PiperWorkerConfig) {
-  const { voiceId, modelId, onnxRuntimePaths, piperPaths, device, instanceId: id, callbackModule } = config;
+  const { voiceId, modelId, onnxRuntimePaths, piperPaths, instanceId: id, callbackModule } = config;
   instanceId = id || 0;
-  deviceLabel = (device || "cpu").toUpperCase();
   currentModelId = modelId;
 
   log(`=== INIT START [${modelId}] ===`);
@@ -100,6 +99,8 @@ async function handleInit(config: PiperWorkerConfig) {
     }
 
     ortInstance.env.wasm.wasmPaths = onnxRuntimePaths.wasm;
+    ortInstance.env.wasm.numThreads = 1; // Enforce single thread per worker
+    
     ortSession = await ortInstance.InferenceSession.create(modelBuffer, {
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all"

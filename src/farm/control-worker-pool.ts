@@ -145,5 +145,5 @@ function createWorker(id: number, config: PiperWorkerConfig, onMessage: (msg: Pi
 
   worker.postMessage({ type: "init", config: { ...config, instanceId: id } });
 
-  return { id, worker, type: config.device || "cpu", busy: false, modelId: config.modelId };
+  return { id, worker, busy: false, modelId: config.modelId };
 }

@@ -36,7 +36,7 @@ describe('CLI > Unified Framework Orchestration', () => {
         const cliPath = path.join(root, 'src/cli/provision-assets-full.ts');
         execSync(`npx tsx ${cliPath} init`, { cwd: project });
 
-        expect(fs.existsSync(path.join(project, 'public/assets/ort.all.min.mjs'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'public/assets/ort.wasm.min.mjs'))).toBe(true);
         expect(fs.existsSync(path.join(project, 'public/assets/piper_phonemize.wasm'))).toBe(true);
     });
 
@@ -49,7 +49,7 @@ describe('CLI > Unified Framework Orchestration', () => {
         const cliPath = path.join(root, 'src/cli/provision-assets-full.ts');
         execSync(`npx tsx ${cliPath} init`, { cwd: project });
 
-        expect(fs.existsSync(path.join(project, 'static/assets/ort.all.min.mjs'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'static/assets/ort.wasm.min.mjs'))).toBe(true);
         expect(fs.existsSync(path.join(project, 'static/assets/piper_phonemize.wasm'))).toBe(true);
     });
 

@@ -51,9 +51,9 @@ export interface PendingRequest {
 export interface WorkerState {
 	id: number;
 	worker: Worker;
-	type: "cpu" | "webgpu";
 	busy: boolean;
   transitioning?: boolean;
+  /** The model ID currently active on this worker. */
   modelId?: string;
 }
 
@@ -92,7 +92,6 @@ export interface PiperWorkerConfig {
 	modelId: string;
 	onnxRuntimePaths: OnnxRuntimePaths;
 	piperPaths: PiperPaths;
-	device?: "cpu" | "webgpu";
 	instanceId?: number;
   /** Optional callback to load in worker thread. */
   callbackModule?: CallbackModuleConfig;
@@ -113,8 +112,8 @@ export interface FarmConfig {
   };
 	onnxRuntimePaths?: OnnxRuntimePaths;
 	piperPaths?: PiperPaths;
+  /** Total number of worker instances to use for parallel synthesis. */
 	cpuInstances: number;
-	webgpuInstances: number;
   /** Optional worker-thread callback for off-thread processing. */
   callbackModule?: CallbackModuleConfig;
   /** Instructs downlaod manager to prioritize this model. Default is true. */

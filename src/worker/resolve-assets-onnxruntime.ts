@@ -10,5 +10,5 @@ import type { OnnxRuntimePaths } from '../types';
 
 export const ONNX_ASSET_URLS: OnnxRuntimePaths = {
   wasm: '/assets/ort-wasm-simd-threaded.wasm',
-  mjs:  '/assets/ort.all.min.mjs',
+  mjs:  '/assets/ort.wasm.min.mjs',
 };
