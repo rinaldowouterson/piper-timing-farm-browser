@@ -41,6 +41,8 @@ export interface PendingRequest {
 	reject: (reason: Error) => void;
 	// If completed but waiting for FIFO order
 	result?: AudioSynthesisResult & { callbackResult?: any };
+  /** The model ID that was active when this request was processed. */
+  modelId?: string;
 }
 
 /**
@@ -94,6 +96,8 @@ export interface PiperWorkerConfig {
 	instanceId?: number;
   /** Optional callback to load in worker thread. */
   callbackModule?: CallbackModuleConfig;
+  /** Instructs downlaod manager to prioritize this model. */
+  prioritizeSelected?: boolean;
 }
 
 /**
@@ -113,6 +117,8 @@ export interface FarmConfig {
 	webgpuInstances: number;
   /** Optional worker-thread callback for off-thread processing. */
   callbackModule?: CallbackModuleConfig;
+  /** Instructs downlaod manager to prioritize this model. Default is true. */
+  prioritizeSelected?: boolean;
 }
 
 export interface PiperWorkerFarm {
@@ -129,7 +135,7 @@ export interface PiperWorkerFarm {
 	terminate(): void;
   isInitialized(): boolean;
   getActiveModelId(): string | null;
-  prepareTransition(): void;
+  prepareTransition(targetModelId: string): void;
 	readonly metrics: {
 		queueLength: number;
 		busyWorkers: number;

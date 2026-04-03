@@ -3,9 +3,9 @@ import type { PiperPaths } from '../types';
 /**
  * Piper asset URLs for phonemization.
  * 
- * This implementation uses static path identifiers. These are 
- * resolution-agnostic and are finalized by the consumer's 
- * bundler or by our Unified CLI provisioning.
+ * Uses static path identifiers resolved at runtime by the consumer's
+ * bundler or by the Unified CLI provisioning tool.
+ * Build-time asset placement is handled by viteStaticCopy in vite.config.ts.
  */
 
 export const PIPER_ASSET_URLS: PiperPaths = {

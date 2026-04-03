@@ -34,9 +34,9 @@ const mockDirectoryHandle = {
     }
 };
 
-Object.defineProperty(global.navigator, 'storage', {
-    value: { getDirectory: async () => mockDirectoryHandle },
-    configurable: true
+vi.stubGlobal('navigator', {
+    ...globalThis.navigator,
+    storage: { getDirectory: async () => mockDirectoryHandle }
 });
 
 // --- 2. Web Worker Mock ---
@@ -92,7 +92,7 @@ class MockWorker {
     }
 }
 
-global.Worker = MockWorker as any;
+vi.stubGlobal('Worker', MockWorker);
 
 // --- 3. Persistence Cleanup ---
 beforeEach(() => {

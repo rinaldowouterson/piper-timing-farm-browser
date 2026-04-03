@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import * as ort from "onnxruntime-web";
+import type * as ort from "onnxruntime-web";
 import type { 
   PiperWorkerMessageIn, 
   PiperWorkerMessageOut, 
@@ -17,6 +17,7 @@ declare const self: DedicatedWorkerGlobalScope;
 
 // --- State ---
 let ortSession: ort.InferenceSession | null = null;
+let ortInstance: any = null;
 let phonemizerModule: PiperPhonemizerModule | null = null;
 let modelConfig: ModelConfig | null = null;
 let instanceId = -1;
@@ -92,7 +93,7 @@ async function handleInit(config: PiperWorkerConfig) {
     // We use dynamic import for the MJS bundle to ensure the environment is correctly set up
     // in the worker thread.
     const ortModule = await import(/* @vite-ignore */ onnxRuntimePaths.mjs);
-    const ortInstance = ortModule.default || ortModule;
+    ortInstance = ortModule.default || ortModule;
     
     if (!ortInstance.env) {
       throw new Error("Invalid ONNX Runtime module: 'env' is missing. Check if the .mjs URL is correct.");
@@ -151,7 +152,7 @@ async function handleSynthesize(
   const { phonemeIds, phonemes } = phonemize(text, modelConfig.espeak.voice);
   
   // 2. Inference
-  const { audio, durations } = await runInference(phonemeIds, options);
+  const { audio, durations } = await runInference(ortInstance, phonemeIds, options);
   
   // 3. Volume Scaling
   const volume = options.volume ?? 1.0;
@@ -240,13 +241,13 @@ function phonemize(text: string, voice: string) {
   throw new Error("Phonemization failed");
 }
 
-async function runInference(phonemeIds: number[], options: any) {
+async function runInference(ortInstance: any, phonemeIds: number[], options: any) {
   const { noise_scale, length_scale, noise_w } = modelConfig!.inference;
   
-  const feeds: Record<string, ort.Tensor> = {
-    input: new ort.Tensor("int64", BigInt64Array.from(phonemeIds.map(BigInt)), [1, phonemeIds.length]),
-    input_lengths: new ort.Tensor("int64", BigInt64Array.from([BigInt(phonemeIds.length)])),
-    scales: new ort.Tensor("float32", [
+  const feeds: Record<string, any> = {
+    input: new ortInstance.Tensor("int64", BigInt64Array.from(phonemeIds.map(BigInt)), [1, phonemeIds.length]),
+    input_lengths: new ortInstance.Tensor("int64", BigInt64Array.from([BigInt(phonemeIds.length)])),
+    scales: new ortInstance.Tensor("float32", [
       noise_scale, 
       options.speed ? length_scale / options.speed : length_scale, 
       noise_w
@@ -254,7 +255,7 @@ async function runInference(phonemeIds: number[], options: any) {
   };
 
   if (Object.keys(modelConfig!.speaker_id_map).length > 0) {
-    feeds.sid = new ort.Tensor("int64", BigInt64Array.from([BigInt(0)]));
+    feeds.sid = new ortInstance.Tensor("int64", BigInt64Array.from([BigInt(0)]));
   }
 
   const results = await ortSession!.run(feeds);

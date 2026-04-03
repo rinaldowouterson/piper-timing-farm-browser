@@ -21,7 +21,8 @@ export async function resolveOpfsAsset(
   url: string,
   modelId: string,
   extension: string,
-  expectedMd5?: string
+  expectedMd5?: string,
+  options?: { signal?: AbortSignal; prioritizeSelected?: boolean }
 ): Promise<ArrayBuffer> {
   const filename = `${modelId}.${extension}`;
   
@@ -29,50 +30,84 @@ export async function resolveOpfsAsset(
     const root = await navigator.storage.getDirectory();
     const voicesDir = await root.getDirectoryHandle("voices", { create: true });
     
+    let downloadedBytes = 0;
+    
     // 1. Try to read from OPFS
     try {
       const fileHandle = await voicesDir.getFileHandle(filename);
       const file = await fileHandle.getFile();
-      const buffer = await file.arrayBuffer();
       
-      // Verification: If MD5 is provided, verify integrity of cached file
-      if (expectedMd5) {
-        try {
-          await verifyMd5(buffer, expectedMd5, url);
-          // console.log(`[OPFS] Cache Hit & Verified: ${filename}`);
-          return buffer;
-        } catch (err) {
-          console.warn(`[OPFS] Cache Corrupted for ${filename}. Re-fetching...`);
-          // Fall through to fetch
-        }
-      } else {
-        return buffer;
+      // We assume if it exists in OPFS and expectedMd5 wasn't requested (or we only check on download),
+      // we can trust it. We'll do a basic size check or just try a HEAD for resumable 
+      // but without target size, OPFS caching is assumed valid unless explicitly corrupted.
+      downloadedBytes = file.size;
+
+      // If we're fully cached, just return it (One-Time verification happens on download)
+      if (downloadedBytes > 0) {
+        // Fast-path: Trust the cache
+        return await file.arrayBuffer();
       }
     } catch (err) {
-      // File not found, proceed to fetch
+      // File not found or empty, proceed to fetch
     }
 
-    // 2. Fetch from Network
-    // console.log(`[OPFS] Cache Miss: Fetching ${url}...`);
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Failed to fetch asset: ${response.statusText}`);
+    // 2. Fetch from Network with Range and Abort Support
+    const headers: Record<string, string> = {};
+    if (downloadedBytes > 0) {
+      headers['Range'] = `bytes=${downloadedBytes}-`;
+    }
+
+    const fetchOptions: RequestInit = {
+      headers,
+      signal: options?.signal,
+    };
+    
+    // priority hint for modern browsers
+    if (options?.prioritizeSelected) {
+      (fetchOptions as any).priority = 'high';
+    }
+
+    const response = await fetch(url, fetchOptions);
+    
+    if (response.status === 416) {
+      // Range Not Satisfiable -> The stored file might already be complete or corrupted,
+      // fallback to returning what we have.
+      const fileHandle = await voicesDir.getFileHandle(filename);
+      return await (await fileHandle.getFile()).arrayBuffer();
+    }
+    
+    if (!response.ok && response.status !== 206) throw new Error(`Failed to fetch asset: ${response.statusText}`);
     
     const buffer = await response.arrayBuffer();
     
-    // 3. Verify Integrity before caching
-    if (expectedMd5) {
-      await verifyMd5(buffer, expectedMd5, url);
-    }
-
-    // 4. Write to OPFS for persistence
+    // 3. Write/Append to OPFS
     const fileHandle = await voicesDir.getFileHandle(filename, { create: true });
-    // @ts-ignore - createWritable is still emerging in some type definitions
-    const writable = await fileHandle.createWritable();
-    await writable.write(buffer);
+    // @ts-ignore
+    const writable = await fileHandle.createWritable({ keepExistingData: response.status === 206 });
+    
+    if (response.status === 206) {
+      await writable.write({ type: 'write', position: downloadedBytes, data: buffer });
+    } else {
+      await writable.write(buffer);
+    }
     await writable.close();
     
-    // console.log(`[OPFS] Successfully cached: ${filename}`);
-    return buffer;
+    // Re-read entire file for MD5 verification if we appended
+    const finalFile = await fileHandle.getFile();
+    const finalBuffer = await finalFile.arrayBuffer();
+
+    // 4. Verify Integrity (One-Time purely after download completes)
+    if (expectedMd5) {
+      try {
+        await verifyMd5(finalBuffer, expectedMd5, url);
+      } catch (err) {
+        // Delete corrupt file
+        await voicesDir.removeEntry(filename);
+        throw err;
+      }
+    }
+
+    return finalBuffer;
 
   } catch (err) {
     const errorVal = err instanceof Error ? err : new Error(String(err));

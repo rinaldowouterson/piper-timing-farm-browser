@@ -21,7 +21,6 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
   const queue: PendingRequest[] = [];
   const processingRequestIds = new Set<string>();
   const pool = createWorkerPool(onReady, onResult);
-  let isTransitioning = false;
 
   function onReady(id: number) {
     // console.log(`Worker ${id} ready, checking queue...`);
@@ -32,9 +31,9 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     if (msg.type === 'success') {
       const { requestId, instanceId, result, callbackResult } = msg;
 
-      // 1. Free the worker (only if not transitioning)
+      // 1. Free the worker
       const worker = pool.getWorkers().find(w => w.id === instanceId);
-      if (worker && !worker.transitioning) worker.busy = false;
+      if (worker) worker.busy = false;
 
       // 2. Clear processing status
       processingRequestIds.delete(requestId);
@@ -60,11 +59,15 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       first.resolve(first.result as any);
     }
 
-    // 2. Assign pending requests to idle workers (Only if not transitioning)
-    if (isTransitioning) return;
-
+    // 2. Assign pending requests to idle workers
     const nextRequest = queue.find(r => !r.result && !isCurrentlyProcessing(r.requestId));
     if (nextRequest) {
+      // Pre-Synthesis Config Check (Mid-Queue Handoff)
+      // Wait for the active pool to match the request's intended model.
+      if (nextRequest.modelId && pool.getActiveModelId() !== nextRequest.modelId) {
+        return;
+      }
+
       const worker = pool.getNextAvailable();
       if (worker) {
         worker.busy = true;
@@ -91,7 +94,6 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       const onnxRuntimePaths = config.onnxRuntimePaths || ONNX_ASSET_URLS;
       const piperPaths = config.piperPaths || PIPER_ASSET_URLS;
 
-      isTransitioning = true;
       const piperConfig = {
         modelId: config.modelId,
         voiceId: config.voiceId,
@@ -100,19 +102,16 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
         callbackModule: config.callbackModule
       };
       await pool.init(piperConfig, config.cpuInstances);
-      isTransitioning = false;
       processQueue();
     },
 
     async reinit(config) {
-      isTransitioning = true;
       await pool.reinit(config);
-      isTransitioning = false;
       processQueue();
     },
 
-    prepareTransition() {
-      isTransitioning = true;
+    prepareTransition(targetModelId: string) {
+      pool.setTargetModelId(targetModelId);
     },
 
     synthesize(text, options = {}) {
@@ -124,6 +123,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
           speed: options.speed ?? 1.0,
           pitch: options.pitch ?? 1.0,
           volume: options.volume ?? 1.0,
+          modelId: pool.getTargetModelId() ?? undefined,
           resolve: (res) => {
             processingRequestIds.delete(requestId);
             resolve(res);

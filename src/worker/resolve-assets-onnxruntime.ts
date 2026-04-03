@@ -3,11 +3,9 @@ import type { OnnxRuntimePaths } from '../types';
 /**
  * ONNX Runtime asset URLs for Tier 1 (npm bundled) entry.
  *
- * This implementation uses static path identifiers. These are 
- * resolution-agnostic and are finalized by the consumer's 
- * bundler or by our Unified CLI provisioning.
- *
- * Caches in OPFS on first load.
+ * Uses static path identifiers resolved at runtime by the consumer's
+ * bundler or by the Unified CLI provisioning tool.
+ * Build-time asset placement is handled by viteStaticCopy in vite.config.ts.
  */
 
 export const ONNX_ASSET_URLS: OnnxRuntimePaths = {

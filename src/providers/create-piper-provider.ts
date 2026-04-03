@@ -42,7 +42,7 @@ export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () 
       // LOCK the farm if we are switching models to ensure subsequent requests 
       // are queued for the NEW model that is currently being provisioned.
       if (farm && activeModelId !== modelId) {
-        farm.prepareTransition();
+        farm.prepareTransition(modelId);
       }
 
       // 1. Download & Verify in background
@@ -77,8 +77,8 @@ export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () 
       return farm.reinit(config);
     },
 
-    prepareTransition() {
-      farm?.prepareTransition();
+    prepareTransition(targetModelId: string) {
+      farm?.prepareTransition(targetModelId);
     },
 
     synthesize(text, options) {
