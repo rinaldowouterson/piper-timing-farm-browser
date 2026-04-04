@@ -105,7 +105,7 @@ const durations = result.metadata.durations;  // Per-phoneme timing in ms
 ### Tier 2: CDN Assets (Zero-Config)
 
 ```typescript
-import { createPiperProvider, PIPER_MODELS } from 'piper-timing-farm/cdn';
+import { createPiperProvider, PIPER_MODELS, PIPER_REPO_BASE_URL } from 'piper-timing-farm/cdn';
 
 const provider = createPiperProvider();
 await provider.init({
@@ -681,12 +681,12 @@ npx piper-farm init
 
 | File | Size | Purpose |
 |------|------|---------|
-| `piper_phonemize.wasm` | ~2MB | Piper phonemization engine |
-| `piper_phonemize.data` | ~20MB | eSpeak-ng language data |
-| `piper_phonemize.js` | ~10KB | Emscripten glue code |
-| `ort.wasm.min.mjs` | ~150KB | ONNX Runtime minimal module |
-| `ort-wasm-simd-threaded.mjs` | ~12MB | ONNX Runtime WASM (SIMD+threads) glue |
-| `ort-wasm-simd-threaded.wasm` | ~15MB | ONNX Runtime WASM engine binary |
+| `piper_phonemize.wasm` | ~620KB | Piper phonemization engine |
+| `piper_phonemize.data` | ~17MB | eSpeak-ng language data |
+| `piper_phonemize.js` | ~118KB | Emscripten glue code |
+| `ort.wasm.min.mjs` | ~50KB | ONNX Runtime minimal module |
+| `ort-wasm-simd-threaded.mjs` | ~24KB | ONNX Runtime WASM (SIMD+threads) glue |
+| `ort-wasm-simd-threaded.wasm` | ~12MB | ONNX Runtime WASM engine binary |
 
 ---
 
