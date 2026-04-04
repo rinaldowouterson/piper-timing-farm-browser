@@ -16,7 +16,7 @@ export function createAssetDownloadController(): DownloadController {
     controller: AbortController;
     promise: Promise<void>;
     urls: { onnx: string; config: string };
-    expectedMd5?: { onnx?: string; config?: string };
+    expectedSha256?: { onnx?: string; config?: string };
   }>();
 
   /** Internal: execute a single model download (both .onnx and .onnx.json). */
@@ -25,7 +25,7 @@ export function createAssetDownloadController(): DownloadController {
     urls: { onnx: string; config: string },
     controller: AbortController,
     state: DownloadState,
-    expectedMd5?: { onnx?: string; config?: string }
+    expectedSha256?: { onnx?: string; config?: string }
   ): Promise<void> {
     state.state = 'downloading';
 
@@ -35,7 +35,7 @@ export function createAssetDownloadController(): DownloadController {
         urls.config,
         modelId,
         "onnx.json",
-        expectedMd5?.config,
+        expectedSha256?.config,
         { signal: controller.signal }
       );
 
@@ -46,7 +46,7 @@ export function createAssetDownloadController(): DownloadController {
         urls.onnx,
         modelId,
         "onnx",
-        expectedMd5?.onnx,
+        expectedSha256?.onnx,
         { signal: controller.signal }
       );
 
@@ -97,7 +97,7 @@ export function createAssetDownloadController(): DownloadController {
         entry.urls,
         newController,
         entry.state,
-        entry.expectedMd5
+        entry.expectedSha256
       ).catch(() => {
         // Error state already set inside executeDownload
       });
@@ -105,7 +105,7 @@ export function createAssetDownloadController(): DownloadController {
   }
 
   return {
-    request(modelId, urls, expectedMd5) {
+    request(modelId, urls, expectedSha256) {
       // Deduplication: if already tracked and not cancelled/error, return existing
       const existing = downloads.get(modelId);
       if (existing && existing.state.state !== 'cancelled' && existing.state.state !== 'error') {
@@ -121,11 +121,11 @@ export function createAssetDownloadController(): DownloadController {
         progress: 0,
       };
 
-      const promise = executeDownload(modelId, urls, controller, state, expectedMd5).catch(() => {
+      const promise = executeDownload(modelId, urls, controller, state, expectedSha256).catch(() => {
         // Error state already set inside executeDownload
       });
 
-      downloads.set(modelId, { state, controller, promise, urls, expectedMd5 });
+      downloads.set(modelId, { state, controller, promise, urls, expectedSha256 });
 
       return promise;
     },
@@ -149,7 +149,7 @@ export function createAssetDownloadController(): DownloadController {
           entry.urls,
           newController,
           entry.state,
-          entry.expectedMd5
+          entry.expectedSha256
         ).then(() => {
           // After prioritized completes, resume paused downloads
           resumePaused();

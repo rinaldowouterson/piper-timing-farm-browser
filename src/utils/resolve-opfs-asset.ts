@@ -1,12 +1,12 @@
-import { verifyMd5 } from "./resolve-md5";
+import { verifySha256 } from "./resolve-sha256";
 
 /**
  * OPFS (Origin Private File System) Asset Resolver.
  * 
  * Provides a persistent, read-through cache for large binary assets (models, wasm).
- * 1. Checks if asset exists in OPFS with correct MD5.
- * 2. If missing/invalid, fetches from network, verifies MD5, and writes to OPFS.
- * 3. Returns a URL (typically a blob or the OPFS entry) for use in Workers.
+ * 1. Checks if asset exists in OPFS with correct SHA-256.
+ * 2. If missing/invalid, fetches from network, verifies SHA-256, and writes to OPFS.
+ * 3. Returns the binary data as an ArrayBuffer.
  */
 
 /**
@@ -14,14 +14,14 @@ import { verifyMd5 } from "./resolve-md5";
  * @param url The public URL to fetch from if not cached.
  * @param modelId Unique identifier for the voice model.
  * @param extension File extension (onnx, onnx.json).
- * @param expectedMd5 Expected MD5 checksum for integrity verification.
+ * @param expectedSha256 Expected SHA-256 checksum for integrity verification.
  * @returns The binary data as an ArrayBuffer.
  */
 export async function resolveOpfsAsset(
   url: string,
   modelId: string,
   extension: string,
-  expectedMd5?: string,
+  expectedSha256?: string,
   options?: { signal?: AbortSignal; prioritizeSelected?: boolean }
 ): Promise<ArrayBuffer> {
   const filename = `${modelId}.${extension}`;
@@ -37,7 +37,7 @@ export async function resolveOpfsAsset(
       const fileHandle = await voicesDir.getFileHandle(filename);
       const file = await fileHandle.getFile();
       
-      // We assume if it exists in OPFS and expectedMd5 wasn't requested (or we only check on download),
+      // We assume if it exists in OPFS and expectedSha256 wasn't requested (or we only check on download),
       // we can trust it. We'll do a basic size check or just try a HEAD for resumable 
       // but without target size, OPFS caching is assumed valid unless explicitly corrupted.
       downloadedBytes = file.size;
@@ -92,14 +92,14 @@ export async function resolveOpfsAsset(
     }
     await writable.close();
     
-    // Re-read entire file for MD5 verification if we appended
+    // Re-read entire file for SHA-256 verification if we appended
     const finalFile = await fileHandle.getFile();
     const finalBuffer = await finalFile.arrayBuffer();
 
     // 4. Verify Integrity (One-Time purely after download completes)
-    if (expectedMd5) {
+    if (expectedSha256) {
       try {
-        await verifyMd5(finalBuffer, expectedMd5, url);
+        await verifySha256(finalBuffer, expectedSha256, url);
       } catch (err) {
         // Delete corrupt file
         await voicesDir.removeEntry(filename);

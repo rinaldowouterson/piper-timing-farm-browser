@@ -59,15 +59,19 @@ export function createPiperProvider(): PiperWorkerFarm & {
       downloader.prioritize(modelId);
 
       // 1. Download & Verify via the download controller
-      await downloader.request(modelId, { onnx: onnxUrl, config: jsonUrl });
+      await downloader.request(
+        modelId, 
+        { onnx: onnxUrl, config: jsonUrl },
+        { onnx: modelEntry?.modelSha256, config: modelEntry?.configSha256 }
+      );
 
       // 2. Initial Setup or Handoff
       if (!farm) {
         farm = createPiperWorkerFarm();
         await farm.init({
           ...config,
-          onnxRuntimePaths: FULL_ASSET_URLS.onnxRuntime,
-          piperPaths: FULL_ASSET_URLS.piper
+          onnxRuntimePaths: config.onnxRuntimePaths || FULL_ASSET_URLS.onnxRuntime,
+          piperPaths: config.piperPaths || FULL_ASSET_URLS.piper
         });
       } else {
       // SHADOW POOL OPTIMIZATION: Non-blocking re-init while queue is running

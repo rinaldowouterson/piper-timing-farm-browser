@@ -65,9 +65,10 @@ npx piper-farm init
 ```
 
 This CLI command:
-- Detects your framework (SvelteKit → `static/assets`, Vite/React → `public/assets`)
-- Copies all required assets to the appropriate directory
-- Provides next-step guidance
+- **Intelligent Detection**: Specifically handles SvelteKit projects (`static/assets`).
+- **Universal Default**: Defaults to the modern `public/assets` convention used by **Angular (v17+)**, **Next.js**, **Vite**, and **React**.
+- Copies all required assets to the appropriate directory.
+- Provides next-step guidance.
 
 **Skip this step if using the CDN entry point (`piper-timing-farm/cdn`).**
 
@@ -189,7 +190,7 @@ When multiple synthesis requests are submitted simultaneously, workers process t
 
 **Problem:** Request 2 (short text) may complete before Request 1 (long text). Without FIFO sequencing, results would arrive out of order.
 
-**Solution:** The [`resolve-sequencer`](src/farm/resolve-sequencer.ts) holds completed results until all preceding requests have resolved:
+**Solution:** The FIFO sequencer holds completed results until all preceding requests have resolved:
 
 ```typescript
 // Queue state during parallel processing
@@ -205,14 +206,14 @@ Queue: [
 // 3. 'c' completes → drain 'c'
 ```
 
-**Implementation:** [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts:56-61)
+**Implementation:** [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts:58-61)
 
 ```typescript
 function processQueue() {
   // 1. Resolve completed FIFO requests
   while (queue.length > 0 && queue[0].result) {
     const first = queue.shift()!;
-    first.resolve(first.result);
+    first.resolve(first.result as any);
   }
   // 2. Assign pending requests to idle workers...
 }
@@ -241,14 +242,18 @@ When switching models during active synthesis, the library uses a **Shadow Pool*
 [T3] Queue continues with Model B (zero gap)
 ```
 
-**Implementation:** [`control-worker-pool.ts`](src/farm/control-worker-pool.ts:58-109)
+**Implementation:** [`control-worker-pool.ts`](src/farm/control-worker-pool.ts:58-110)
 
 ```typescript
 async reinit(config) {
   // 1. Spawn Shadow Pool
   const shadowPool: WorkerState[] = [];
   for (let i = 0; i < count; i++) {
-    const worker = createWorker(id, newConfig, onMessage);
+    const id = nextWorkerId++;
+    const worker = createWorker(id, newConfig, (msg) => {
+      if (msg.type === 'ready') onReady(msg.instanceId);
+      else onResult(msg);
+    });
     shadowPool.push(worker);
   }
   
@@ -288,22 +293,23 @@ export async function resolveOpfsAsset(
   modelId: string,
   extension: string,
   expectedMd5?: string,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; prioritizeSelected?: boolean }
 ): Promise<ArrayBuffer> {
   const root = await navigator.storage.getDirectory();
   const voicesDir = await root.getDirectoryHandle("voices", { create: true });
   
   // 1. Try OPFS first
   try {
-    const file = await voicesDir.getFileHandle(filename);
-    return await file.arrayBuffer();  // Fast-path: Trust the cache
+    const fileHandle = await voicesDir.getFileHandle(filename);
+    const file = await fileHandle.getFile();
+    if (file.size > 0) return await file.arrayBuffer();
   } catch { /* Not found, proceed to fetch */ }
   
   // 2. Fetch with Range support (resumable downloads)
-  const response = await fetch(url, { headers, signal });
+  const response = await fetch(url, fetchOptions);
   
-  // 3. Write to OPFS
-  const writable = await fileHandle.createWritable();
+  // 3. Write/Append to OPFS
+  const writable = await fileHandle.createWritable({ keepExistingData: isRange });
   await writable.write(buffer);
   await writable.close();
   
@@ -395,7 +401,7 @@ await provider.synthesize('Hello', { speakerId: 42 });
 await provider.synthesize('Hello', { speakerId: 999 });
 ```
 
-**Implementation:** [`process-piper-synthesis.worker.ts`](src/worker/process-piper-synthesis.worker.ts:960-974)
+**Implementation:** [`process-piper-synthesis.worker.ts`](src/worker/process-piper-synthesis.worker.ts:276-290)
 
 ```typescript
 function resolveSpeakerId(requested: number | undefined, config: ModelConfig): number {
@@ -404,7 +410,7 @@ function resolveSpeakerId(requested: number | undefined, config: ModelConfig): n
   
   const sid = requested ?? 0;
   if (sid < 0 || sid >= speakerCount) {
-    warn(`speakerId ${sid} out of range, falling back to 0`);
+    warn(`speakerId ${sid} out of range (0-${speakerCount - 1}), falling back to 0`);
     return 0;
   }
   return sid;
@@ -578,18 +584,36 @@ Provisions WASM and binary assets to your project's static directory.
 
 **Framework Detection:**
 
-| Framework | Detection File | Default Target |
+| Framework | Detection Strategy | Default Target |
 |-----------|---------------|----------------|
-| SvelteKit | `svelte.config.js` | `static/assets` |
-| Vite/React | `package.json` | `public/assets` |
-| Angular | `angular.json` | `public/assets` |
-| Next.js | `package.json` | `public/assets` |
+| SvelteKit | Detects `svelte.config.js` | `static/assets` |
+| **All Others** | Universal Fallback (Angular, Next.js, etc.) | `public/assets` |
 
-**Custom Target:**
+**Custom Target Path:**
+
+By default, the CLI uses the targets above. However, you can provide an explicit path for any non-standard project structure:
 
 ```bash
-npx piper-farm init ./public/wasm
+npx piper-farm init ./public/custom-wasm-folder
 ```
+
+> [!IMPORTANT]
+> **Asset Path Defaults:** While the CLI allows you to provision assets to any folder, the library **defaults** to looking for them in the `/assets/` subfolder at runtime (e.g., `yourdomain.com/assets/piper_phonemize.js`).
+> 
+> You can override these defaults during initialization without editing the source code:
+> 
+> ```typescript
+> await provider.init({
+>   // ...
+>   piperPaths: {
+>     piperWasm: '/custom/piper_phonemize.wasm',
+>     piperData: '/custom/piper_phonemize.data',
+>     piperJs:   '/custom/piper_phonemize.js'
+>   }
+> });
+> ```
+> 
+> **Note on Extensions:** The library source code is TypeScript (`.ts`), but it expects the compiled/binary assets (`.js` glue code and `.wasm` engines) to be present in your static folder. This ensures compatibility with all modern bundlers and build processes.
 
 **Fail-Fast Security:**
 
@@ -636,24 +660,29 @@ interface PiperModelDefinition {
   numSpeakers: number;     // 1 for single-speaker
   isMultiSpeaker: boolean; // Derived from numSpeakers
   speakerId: number;       // Default speaker (0)
+  modelSha256?: string;    // SHA-256 hash for integrity
+  configSha256?: string;   // SHA-256 hash for integrity
 }
 ```
 
-**Available Models:**
+**Available Models & Licenses:**
 
-| ID | Language | Speakers | Quality |
-|----|----------|----------|---------|
-| `en_US-bryce-medium` | English (US) | 1 | Medium |
-| `en_US-ljspeech-high` | English (US) | 1 | High |
-| `en_US-kristin-medium` | English (US) | 1 | Medium |
-| `en_US-arctic-medium` | English (US) | 1 | Medium |
-| `en_GB-cori-medium` | English (UK) | 1 | Medium |
-| `en_US-libritts-high` | English (US) | 904 | High |
-| `nl_NL-alex-medium` | Dutch (NL) | 1 | Medium |
-| `nl_BE-rdh-medium` | Dutch (BE) | 1 | Medium |
-| `sv_SE-alma-medium` | Swedish | 1 | Medium |
-| `sv_SE-nst-medium` | Swedish | 1 | Medium |
-| `uk_UA-ukrainian_tts-medium` | Ukrainian | 3 | Medium |
+| Language | Model Name | Quality | License | Dataset / Training info |
+|---|---|---|---|---|
+| English (en_US) | bryce | medium | Public Domain | Recorded by Bryce Beattie |
+| English (en_US) | kristin | medium | CC-BY 4.0 | Recorded by Kristin (LibriVox) |
+| English (en_US) | arctic | medium | Public Domain | CMU Arctic dataset |
+| English (en_US) | libritts | high | CC-BY 4.0 | LibriTTS dataset |
+| English (en_US) | ljspeech | high | Public Domain | LJSpeech dataset |
+| English (en_GB) | cori | medium | CC-BY 4.0 | Recorded by Cori |
+| German (de_DE) | mls | medium | CC-BY 4.0 | Multi-lingual LibriSpeech |
+| French (fr_FR) | mls | medium | CC-BY 4.0 | Multi-lingual LibriSpeech |
+| Dutch (nl_BE) | rdh | medium | CC0 | Trained from scratch |
+| Dutch (nl_NL) | alex | medium | CC0 | Finetuned from rdh (Safe) |
+| Dutch (nl_NL) | mls | medium | CC-BY 4.0 | Multi-lingual LibriSpeech |
+| Swedish (sv_SE) | nst | medium | CC0 | Trained from scratch (KBLab) |
+| Swedish (sv_SE) | alma | medium | CC-BY 4.0 | NST Swedish TTS dataset |
+| Ukrainian (uk_UA) | ukrainian_tts | medium | CC-BY 4.0 | Multi-speaker Ukrainian |
 
 **Model Source:** HuggingFace repository at `PIPER_REPO_BASE_URL`:
 
@@ -695,7 +724,7 @@ Cached assets bypass network entirely:
 
 ```typescript
 // resolve-opfs-asset.ts
-if (downloadedBytes > 0) {
+if (file.size > 0) {
   return await file.arrayBuffer();  // Fast-path: Trust the cache
 }
 ```
@@ -724,7 +753,7 @@ if (downloadedBytes > 0) {
 |-----|---------|-----------------|
 | Web Workers | Parallel synthesis | All modern browsers |
 | OPFS | Asset caching | Chrome 86+, Firefox 111+, Safari 15.2+ |
-| Web Crypto (MD5) | Integrity verification | All modern browsers |
+| SHA-256 (Web Crypto) | Integrity verification | All modern browsers |
 | SharedArrayBuffer | ONNX threading | Requires COOP/COEP headers |
 
 ### Security Headers

@@ -101,6 +101,8 @@ export interface PiperWorkerConfig {
   callbackModule?: CallbackModuleConfig;
   /** Instructs downlaod manager to prioritize this model. */
   prioritizeSelected?: boolean;
+  modelSha256?: string;
+  configSha256?: string;
 }
 
 /**
@@ -122,6 +124,9 @@ export interface FarmConfig {
   callbackModule?: CallbackModuleConfig;
   /** Instructs downlaod manager to prioritize this model. Default is true. */
   prioritizeSelected?: boolean;
+  /** SHA-256 hashes for model integrity verification. */
+  modelSha256?: string;
+  configSha256?: string;
 }
 
 export interface PiperWorkerFarm {
@@ -194,7 +199,11 @@ export interface DownloadState {
  */
 export interface DownloadController {
   /** Start or resume a model download. Deduplicates by modelId. */
-  request(modelId: string, urls: { onnx: string; config: string }, expectedMd5?: { onnx?: string; config?: string }): Promise<void>;
+  request(
+    modelId: string, 
+    urls: { onnx: string; config: string }, 
+    expectedSha256?: { onnx?: string; config?: string }
+  ): Promise<void>;
   /** Pause all other downloads and prioritize the given model. */
   prioritize(modelId: string): void;
   /** Cancel a download and purge any partial OPFS files. Record stays in state map. */
