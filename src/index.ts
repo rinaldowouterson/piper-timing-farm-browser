@@ -3,7 +3,7 @@
  * 
  * High-performance, multi-threaded Piper TTS for the browser.
  * Features Worker Farm parallelization, Worker-Thread callbacks, 
- * and "Asshole-Proof" background model switching.
+ * and stress-test-proof background model switching.
  */
 
 export { createPiperWorkerFarm } from './farm/create-piper-worker-farm';

@@ -39,6 +39,14 @@ vi.stubGlobal('navigator', {
     storage: { getDirectory: async () => mockDirectoryHandle }
 });
 
+// --- 2. Fetch Mock ---
+vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    arrayBuffer: async () => new ArrayBuffer(0),
+    json: async () => ({})
+}));
+
 // --- 2. Web Worker Mock ---
 class MockWorker {
     onmessage: ((e: any) => void) | null = null;

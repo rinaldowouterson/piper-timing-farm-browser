@@ -12,7 +12,7 @@ import { PIPER_MODELS } from "../expose-piper-models";
 import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
 
 /**
- * High-level Piper Provider with "Asshole-Proof" background model switching.
+ * High-level Piper Provider with stress-test-proof background model switching.
  * 
  * Logic:
  * 1. Tracks current active model.
@@ -70,12 +70,12 @@ export function createPiperProvider(): PiperWorkerFarm & {
           piperPaths: FULL_ASSET_URLS.piper
         });
       } else {
-        // ASSHOLE OPTIMIZATION: Non-blocking re-init while queue is running
-        await farm.reinit({ 
-          modelId, 
-          voiceId: config.voiceId,
-          modelUrls: config.modelUrls
-        });
+      // SHADOW POOL OPTIMIZATION: Non-blocking re-init while queue is running
+      await farm.reinit({ 
+        modelId, 
+        voiceId: config.voiceId,
+        modelUrls: config.modelUrls
+      });
       }
 
       activeModelId = modelId;
