@@ -1,27 +1,32 @@
 import type { 
-  PiperWorkerFarm, 
-  FarmConfig 
+  DownloadState,
+  FarmConfig,
+  PiperWorkerFarm 
 } from "../types";
-import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
+import { createPiperProvider as createBaseProvider } from "./create-piper-provider";
 import { ONNX_CDN_URLS, PIPER_CDN_URLS } from "../worker/resolve-assets-cdn";
 
 /**
  * CDN-Optimized Piper Provider.
  * 
- * Automatically resolves all WASM/Binary dependencies from jadelivr/unpkg.
+ * Automatically resolves all WASM/Binary dependencies from jsdelivr/unpkg.
  * Ideal for "The Whole Nine Yards" of quick integration without local infrastructure.
  */
-export function createPiperProvider(): PiperWorkerFarm {
-  const farm = createPiperWorkerFarm();
-  const baseInit = farm.init;
+export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & { 
+  getActiveModelId: () => string | null;
+  cancelDownload: (modelId: string) => Promise<void>;
+  getDownloadState: () => Map<string, DownloadState>;
+} {
+  const provider = createBaseProvider();
+  const baseInit = provider.init;
 
-  farm.init = async (config: FarmConfig) => {
+  provider.init = async (config: FarmConfig) => {
     return baseInit({
       ...config,
-      onnxRuntimePaths: ONNX_CDN_URLS,
-      piperPaths: PIPER_CDN_URLS
+      onnxRuntimePaths: config.onnxRuntimePaths || ONNX_CDN_URLS,
+      piperPaths: config.piperPaths || PIPER_CDN_URLS
     });
   };
 
-  return farm;
+  return provider;
 }

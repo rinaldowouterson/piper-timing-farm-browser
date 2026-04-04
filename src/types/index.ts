@@ -15,19 +15,15 @@ export interface PiperMetadata {
   modelId?: string;
 }
 
-/**
- * Result of a single synthesis request.
- */
 export interface AudioSynthesisResult {
 	audioData: Float32Array;
 	sampleRate: number;
 	durationMs: number;
-	metadata: {
+	metadata: PiperMetadata & {
 		generationTimeMs?: number;
-    modelId?: string;
     /** The speaker ID used for this synthesis (actual value after validation). */
     speakerId?: number;
-	} & Partial<PiperMetadata>;
+  };
 }
 
 /**
@@ -129,6 +125,13 @@ export interface FarmConfig {
   configSha256?: string;
 }
 
+export interface SynthesizeOptions {
+  speed?: number;
+  pitch?: number;
+  volume?: number;
+  speakerId?: number;
+}
+
 export interface PiperWorkerFarm {
 	init(config: FarmConfig): Promise<void>;
   /** 
@@ -138,7 +141,7 @@ export interface PiperWorkerFarm {
   reinit(config: Pick<FarmConfig, 'voiceId' | 'modelId' | 'modelUrls'>): Promise<void>;
 	synthesize(
 		text: string,
-		options?: { speed?: number; pitch?: number; volume?: number; speakerId?: number }
+		options?: SynthesizeOptions
 	): Promise<AudioSynthesisResult & { callbackResult?: any }>;
 	terminate(): void;
   clearPiperModelCache(): Promise<void>;

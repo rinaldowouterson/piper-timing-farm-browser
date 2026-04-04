@@ -23,7 +23,7 @@ import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
  * 4. Download prioritization ensures the last-selected model loads first.
  * 5. Speaker ID flows per-request without triggering infrastructure changes.
  */
-export function createPiperProvider(): PiperWorkerFarm & { 
+export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & { 
   getActiveModelId: () => string | null;
   cancelDownload: (modelId: string) => Promise<void>;
   getDownloadState: () => Map<string, DownloadState>;
@@ -86,10 +86,7 @@ export function createPiperProvider(): PiperWorkerFarm & {
       loadingModelId = null;
     },
 
-    reinit(config) {
-      if (!farm) throw new Error("Provider not initialized");
-      return farm.reinit(config);
-    },
+
 
     prepareTransition(targetModelId: string) {
       farm?.prepareTransition(targetModelId);

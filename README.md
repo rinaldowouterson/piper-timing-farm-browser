@@ -43,7 +43,7 @@ High-performance, multi-threaded Piper TTS engine for the browser. Features fram
 
 Unlike standard Piper wrappers, this library:
 
-- **Exposes phoneme durations** — The `AudioSynthesisResult.metadata.durations` array provides per-phoneme timing data essential for lipsync applications
+- **Exposes phoneme durations** — The `AudioSynthesisResult.metadata.durations` (`Float32Array`) provides per-phoneme timing data essential for lipsync applications
 - **Survives rapid model switching** — The provider queues model transitions and performs atomic handoffs without dropping queued requests, even under stress-test conditions
 - **Caches intelligently** — OPFS-based read-through cache prevents re-downloading ~30MB of WASM/model assets
 - **Processes off-thread** — Worker-thread callbacks allow viseme/phoneme processing without blocking the main thread
@@ -144,7 +144,6 @@ Main Thread                    Worker Pool
 |-----------|------|---------|
 | [`createPiperProvider`](src/providers/create-piper-provider.ts) | Provider | High-level API with download management |
 | [`createPiperWorkerFarm`](src/farm/create-piper-worker-farm.ts) | Farm | Queue management and worker distribution |
-| [`createWorkerPool`](src/farm/control-worker-pool.ts) | Pool | Worker lifecycle and load balancing |
 | [`process-piper-synthesis.worker`](src/worker/process-piper-synthesis.worker.ts) | Worker | ONNX inference and phonemization |
 | [`createAssetDownloadController`](src/farm/control-asset-download.ts) | Downloader | Model asset download orchestration |
 
@@ -206,7 +205,7 @@ Queue: [
 // 3. 'c' completes → drain 'c'
 ```
 
-**Implementation:** [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts:58-61)
+**Implementation:** See `processQueue()` in [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts) for the exact draining behavior.
 
 ```typescript
 function processQueue() {
@@ -219,6 +218,8 @@ function processQueue() {
   // 2. Assign pending requests to idle workers
   const nextRequest = queue.find(r => !r.result && !isCurrentlyProcessing(r.requestId));
   if (nextRequest) {
+    // ... Adaptive handoff logic (if transitioning) ...
+
     const worker = pool.getNextAvailable();
     if (worker) {
       worker.busy = true;
@@ -227,7 +228,10 @@ function processQueue() {
         type: 'synthesize',
         text: nextRequest.text,
         requestId: nextRequest.requestId,
-        // ... options
+        speed: nextRequest.speed,
+        pitch: nextRequest.pitch,
+        volume: nextRequest.volume,
+        speakerId: nextRequest.speakerId
       });
     }
   }
@@ -257,37 +261,41 @@ When switching models during active synthesis, the library uses a **Shadow Pool*
 [T3] Queue continues with Model B (zero gap)
 ```
 
-**Implementation:** [`control-worker-pool.ts`](src/farm/control-worker-pool.ts:58-110)
+**Implementation:** See `reinit(config)` in [`control-worker-pool.ts`](src/farm/control-worker-pool.ts).
 
 ```typescript
-async reinit(config) {
+async reinit(config: Partial<PiperWorkerConfig>) {
   // 1. Spawn Shadow Pool
-  const shadowPool: WorkerState[] = [];
-  for (let i = 0; i < count; i++) {
-    const id = nextWorkerId++;
-    const worker = createWorker(id, newConfig, (msg) => {
-      if (msg.type === 'ready') onReady(msg.instanceId);
-      else onResult(msg);
-    });
-    shadowPool.push(worker);
-  }
+  // ... Loop spawning workers and storing initPromises ...
   
   // 2. Wait for Shadow Pool to be READY
   await Promise.all(initPromises);
   
   // 3. Promote Shadow Pool & Retire Old Workers
+  const oldWorkers = [...workers];
   workers = shadowPool;
   activeModelId = newConfig.modelId;
+  currentConfig = newConfig;
   
   // 4. Graceful Retirement: Old workers finish current task then die
   oldWorkers.forEach(w => {
-    if (!w.busy) w.worker.terminate();
-    else // Wait for last result then terminate
+    if (!w.busy) {
+      w.worker.terminate();
+    } else {
+      // Worker is busy, wait for its last result then kill it
+      const cleanupHandler = (e: MessageEvent) => {
+        if (e.data.type === 'success' || e.data.type === 'error') {
+          w.worker.removeEventListener('message', cleanupHandler);
+          w.worker.terminate();
+        }
+      };
+      w.worker.addEventListener('message', cleanupHandler);
+    }
   });
 }
 ```
 
-**Adaptive Handoff:** Unstarted queue items automatically adopt the new model once the shadow pool is ready. See [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts:66-80).
+**Adaptive Handoff:** Unstarted queue items automatically adopt the new model once the shadow pool is ready. See `processQueue()` in [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts).
 
 ---
 
@@ -338,6 +346,8 @@ export async function resolveOpfsAsset(
 **Cache Location:** `navigator.storage.getDirectory().getDirectoryHandle("voices")`
 
 **Cache Clearing:** [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts)
+
+*Note: The high-level provider automatically calls `resolveCacheClearing()` first, then terminates the internal farm, ensuring no OPFS locks remain during the wipe.*
 
 ```typescript
 await provider.clearPiperModelCache();  // Purges all cached models
@@ -416,7 +426,7 @@ await provider.synthesize('Hello', { speakerId: 42 });
 await provider.synthesize('Hello', { speakerId: 999 });
 ```
 
-**Implementation:** [`process-piper-synthesis.worker.ts`](src/worker/process-piper-synthesis.worker.ts:276-290)
+**Implementation:** See `resolveSpeakerId()` in [`process-piper-synthesis.worker.ts`](src/worker/process-piper-synthesis.worker.ts).
 
 ```typescript
 function resolveSpeakerId(requested: number | undefined, config: ModelConfig): number {
@@ -496,14 +506,15 @@ postMessage({ type: 'success', result, callbackResult }, {
 
 ### `createPiperProvider()`
 
-High-level API with download management and model switching.
+High-level API with download management and model switching. You switch models efficiently by simply calling `provider.init()` again with the new target model ID; it will transparently orchestrate background download and shadow pool handoff.
+
+
 
 ```typescript
 const provider = createPiperProvider();
 
 // Methods
-await provider.init(config: FarmConfig);
-await provider.reinit(config: Pick<FarmConfig, 'voiceId' | 'modelId' | 'modelUrls'>);
+await provider.init(config: FarmConfig); // Serves for initial load and fast hot-swapping
 await provider.synthesize(text: string, options?: SynthesizeOptions);
 await provider.clearPiperModelCache();
 await provider.cancelDownload(modelId: string);
@@ -553,6 +564,8 @@ interface FarmConfig {
   cpuInstances: number;               // Number of parallel workers (default: 2)
   callbackModule?: CallbackModuleConfig; // Optional: Worker-thread callback
   prioritizeSelected?: boolean;       // Download prioritization (default: true)
+  modelSha256?: string;               // Optional: specific SHA-256 integrity validation
+  configSha256?: string;              // Optional: specific SHA-256 integrity validation
 }
 ```
 
@@ -567,6 +580,26 @@ interface SynthesizeOptions {
 }
 ```
 
+### `OnnxRuntimePaths`
+
+```typescript
+interface OnnxRuntimePaths {
+  wasm: string;       // Path to the WASM binaries folder
+  mjs: string;        // Path to ort.wasm.min.mjs
+  mjsHelper: string;  // Path to ort-wasm-simd-threaded.mjs
+}
+```
+
+### `PiperPaths`
+
+```typescript
+interface PiperPaths {
+  piperWasm: string;  // Path to piper_phonemize.wasm
+  piperJs: string;    // Path to piper_phonemize.js
+  piperData: string;  // Path to piper_phonemize.data
+}
+```
+
 ### `AudioSynthesisResult`
 
 ```typescript
@@ -574,18 +607,22 @@ interface AudioSynthesisResult {
   audioData: Float32Array;    // Raw audio samples
   sampleRate: number;         // Audio sample rate (e.g., 22050)
   durationMs: number;         // Total audio duration in milliseconds
-  metadata: {
+  metadata: PiperMetadata & {
     generationTimeMs?: number;  // Synthesis processing time
-    modelId?: string;           // Model used for this synthesis
     speakerId?: number;         // Speaker ID used (after validation)
-    phonemeIds: number[];       // Phoneme ID sequence
-    phonemes?: string[];        // Phoneme symbol sequence
-    durations?: Float32Array;   // Per-phoneme timing in ms
-    totalAudioDurationMs: number;
-    sampleRate: number;
-    hopSize: number;            // VITS hop size (256)
   };
-  callbackResult?: any;        // Result from worker-thread callback
+  // Note: the return type is an intersection: `{ ... } & { callbackResult?: any }`
+}
+
+interface PiperMetadata {
+  modelId?: string;           // Model ID used for this synthesis
+  phonemeIds: number[];       // Phoneme ID sequence
+  phonemes?: string[];        // Phoneme symbol sequence
+  durations?: Float32Array;   // Per-phoneme timing in ms
+  totalAudioDurationMs: number;
+  sampleRate: number;
+  hopSize: number;            // VITS hop size (256)
+  phonemeIdMap?: Record<string, number[]>; // Map of phonemes to IDs
 }
 ```
 
@@ -791,8 +828,19 @@ import type {
   CallbackModuleConfig,
   DownloadState,
   DownloadController,
-  PiperModelDefinition,
-  PiperMetadata
+  PiperMetadata,
+  SynthesizeOptions,
+  PendingRequest,
+  WorkerState,
+  PiperWorkerMessageIn,
+  PiperWorkerMessageOut,
+  PiperModelConfig
+} from 'piper-timing-farm';
+
+import { 
+  type PiperModelDefinition,  // Re-exported from expose-piper-models
+  PIPER_MODELS, 
+  PIPER_REPO_BASE_URL 
 } from 'piper-timing-farm';
 ```
 

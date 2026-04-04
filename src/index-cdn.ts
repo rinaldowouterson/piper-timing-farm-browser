@@ -6,5 +6,5 @@
  */
 
 export { createPiperProvider } from './providers/create-piper-provider-cdn';
-export { PIPER_MODELS } from './expose-piper-models';
+export { PIPER_MODELS, PIPER_REPO_BASE_URL } from './expose-piper-models';
 export type * from './types';
