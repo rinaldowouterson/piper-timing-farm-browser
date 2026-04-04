@@ -463,7 +463,7 @@ await provider.init({
 // /js/my-viseme-processor.js
 export function processVisemes(result) {
   // result.audioData - Float32Array
-  // result.metadata.durations - number[] (per-phoneme timing)
+  // result.metadata.durations - Float32Array (per-phoneme timing in ms)
   // result.metadata.phonemes - string[] (phoneme symbols)
   
   // Compute visemes from phonemes
@@ -481,10 +481,10 @@ const result = await provider.synthesize('Hello');
 const { visemes, timestamps } = result.callbackResult;
 ```
 
-**Zero-Copy Transfer:** Callback results are transferred (not copied) back to the main thread:
+**Transfer Optimization:** The library automatically detects `ArrayBuffer` and `TypedArray` objects in callback results and includes them in the `postMessage` transfer list. Non-transferable return values (plain objects, strings, numbers) are copied via structured clone.
 
 ```typescript
-// Worker transfers audio buffer + callback result buffers
+// Audio buffer is always transferred. Callback result buffers are detected and transferred where possible.
 postMessage({ type: 'success', result, callbackResult }, {
   transfer: [audio.buffer, ...collectTransferables(callbackResult)]
 });
@@ -580,7 +580,7 @@ interface AudioSynthesisResult {
     speakerId?: number;         // Speaker ID used (after validation)
     phonemeIds: number[];       // Phoneme ID sequence
     phonemes?: string[];        // Phoneme symbol sequence
-    durations?: number[];       // Per-phoneme timing in ms
+    durations?: Float32Array;   // Per-phoneme timing in ms
     totalAudioDurationMs: number;
     sampleRate: number;
     hopSize: number;            // VITS hop size (256)
@@ -709,17 +709,20 @@ https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/
 
 ### Zero-Copy Transfer
 
-All audio data and callback results use `postMessage` with `transfer` to avoid serialization overhead. The following data types are automatically detected and transferred (not copied) when returned from a worker-thread callback:
+The `audioData` buffer (`Float32Array`) is always transferred via `postMessage` with `transfer`, moving the underlying memory from the worker to the main thread without copying.
 
-| Type | Description |
-|------|-------------|
-| `ArrayBuffer` | Raw binary memory buffer |
-| `Float32Array` | Audio samples and timing data |
-| `Uint16Array` | Viseme/Phoneme mappings |
-| `Int32Array` | Morph target indices |
-| **Nested Objects** | The transfer logic recursively walks objects to find and transfer all contained buffers |
+For worker-thread callback results, the library recursively walks the return value and transfers any `ArrayBuffer` or `TypedArray` buffers it finds. The following types are detected:
 
-**Effect:** Memory is transferred directly between the worker and main thread. The worker loses access to the memory, and the main thread gains it with zero latency cost.
+| Type | Transferred | Example |
+|------|-------------|---------|
+| `ArrayBuffer` | ✅ Zero-copy | Raw binary data |
+| `Float32Array` | ✅ Zero-copy | Audio samples, timing data |
+| `Uint16Array`, `Int32Array`, etc. | ✅ Zero-copy | Any TypedArray backed by an `ArrayBuffer` |
+| Plain objects, strings, numbers | ❌ Copied | Serialized via structured clone |
+
+**Note:** Transfer performance depends on what your callback returns. Returning `TypedArray` objects enables zero-copy transfer. Returning plain objects or deeply nested non-buffer data will fall back to the browser's standard structured clone algorithm.
+
+**Effect:** The `audioData` buffer (typically hundreds of thousands of samples) moves between threads with zero serialization cost. Small metadata fields (phoneme IDs, model ID, etc.) are copied, which is negligible at their size.
 
 ### Single-Threaded Workers
 

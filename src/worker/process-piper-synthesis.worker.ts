@@ -157,7 +157,15 @@ async function handleSynthesize(
   const resolvedSpeakerId = resolveSpeakerId(options.speakerId, modelConfig);
   const { audio, durations } = await runInference(ortInstance, phonemeIds, options, resolvedSpeakerId);
   
-  // 3. Volume Scaling
+  // 3. Durations Conversion (Frames -> MS)
+  if (durations) {
+    const msPerFrame = (256 / modelConfig.audio.sample_rate) * 1000;
+    for (let i = 0; i < durations.length; i++) {
+      durations[i] *= msPerFrame;
+    }
+  }
+
+  // 4. Volume Scaling
   const volume = options.volume ?? 1.0;
   if (volume !== 1.0) {
     for (let i = 0; i < audio.length; i++) audio[i] *= volume;
@@ -176,7 +184,7 @@ async function handleSynthesize(
       speakerId: resolvedSpeakerId,
       phonemeIds,
       phonemes,
-      durations: durations ? Array.from(durations) : undefined,
+      durations: durations || undefined,
       totalAudioDurationMs: durationMs,
       sampleRate: modelConfig.audio.sample_rate,
       hopSize: 256

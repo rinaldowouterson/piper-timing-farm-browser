@@ -6,7 +6,7 @@
 export interface PiperMetadata {
 	phonemeIds: number[];
 	phonemes?: string[];
-	durations?: number[];
+	durations?: Float32Array;
 	totalAudioDurationMs: number;
 	sampleRate: number;
 	hopSize: number;

@@ -29,6 +29,9 @@ const mockDirectoryHandle = {
         if (!mockOpfsFiles.has(name) && !options?.create) throw new Error('File not found');
         return mockFileHandle(name);
     },
+    removeEntry: async (name: string) => {
+        mockOpfsFiles.delete(name);
+    },
     keys: async function* () {
         for (const key of mockOpfsFiles.keys()) yield key;
     }
