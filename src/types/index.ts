@@ -25,6 +25,8 @@ export interface AudioSynthesisResult {
 	metadata: {
 		generationTimeMs?: number;
     modelId?: string;
+    /** The speaker ID used for this synthesis (actual value after validation). */
+    speakerId?: number;
 	} & Partial<PiperMetadata>;
 }
 
@@ -37,6 +39,7 @@ export interface PendingRequest {
 	speed: number;
 	pitch: number;
 	volume: number;
+	speakerId: number;
 	resolve: (result: AudioSynthesisResult & { callbackResult?: any }) => void;
 	reject: (reason: Error) => void;
 	// If completed but waiting for FIFO order
@@ -130,7 +133,7 @@ export interface PiperWorkerFarm {
   reinit(config: Pick<FarmConfig, 'voiceId' | 'modelId' | 'modelUrls'>): Promise<void>;
 	synthesize(
 		text: string,
-		options?: { speed?: number; pitch?: number; volume?: number }
+		options?: { speed?: number; pitch?: number; volume?: number; speakerId?: number }
 	): Promise<AudioSynthesisResult & { callbackResult?: any }>;
 	terminate(): void;
   clearPiperModelCache(): Promise<void>;
@@ -154,6 +157,7 @@ export type PiperWorkerMessageIn =
 			speed?: number;
 			pitch?: number;
 			volume?: number;
+			speakerId?: number;
 	  };
 
 export type PiperWorkerMessageOut =
@@ -166,4 +170,37 @@ export interface PiperModelConfig {
 	espeak: { voice: string };
 	inference: { noise_scale: number; length_scale: number; noise_w: number };
 	speaker_id_map: Record<string, number>;
+}
+
+// --- Download Controller ---
+
+/**
+ * State of a single model download.
+ * Kept in the state map even after cancellation for frontend observability.
+ */
+export interface DownloadState {
+  modelId: string;
+  state: 'queued' | 'downloading' | 'paused' | 'complete' | 'cancelled' | 'error';
+  bytesDownloaded: number;
+  bytesTotal: number;
+  /** 0.0 to 1.0 */
+  progress: number;
+  error?: string;
+}
+
+/**
+ * Stateful download controller for model assets.
+ * Manages prioritization, cancellation, and OPFS cleanup.
+ */
+export interface DownloadController {
+  /** Start or resume a model download. Deduplicates by modelId. */
+  request(modelId: string, urls: { onnx: string; config: string }, expectedMd5?: { onnx?: string; config?: string }): Promise<void>;
+  /** Pause all other downloads and prioritize the given model. */
+  prioritize(modelId: string): void;
+  /** Cancel a download and purge any partial OPFS files. Record stays in state map. */
+  cancel(modelId: string): Promise<void>;
+  /** Cancel all active and paused downloads with cleanup. */
+  cancelAll(): Promise<void>;
+  /** Returns a snapshot of every model's download lifecycle. */
+  getState(): Map<string, DownloadState>;
 }

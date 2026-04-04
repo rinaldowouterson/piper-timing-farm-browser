@@ -49,7 +49,8 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
         await handleSynthesize(msg.text, msg.requestId, {
           speed: msg.speed,
           pitch: msg.pitch,
-          volume: msg.volume
+          volume: msg.volume,
+          speakerId: msg.speakerId
         });
         break;
     }
@@ -141,7 +142,7 @@ async function handleLoadCallback(modulePath: string, functionName: string) {
 async function handleSynthesize(
   text: string, 
   requestId: string, 
-  options: { speed?: number; pitch?: number; volume?: number }
+  options: { speed?: number; pitch?: number; volume?: number; speakerId?: number }
 ) {
   if (!ortSession || !phonemizerModule || !modelConfig) {
     throw new Error("Worker not initialized");
@@ -153,7 +154,8 @@ async function handleSynthesize(
   const { phonemeIds, phonemes } = phonemize(text, modelConfig.espeak.voice);
   
   // 2. Inference
-  const { audio, durations } = await runInference(ortInstance, phonemeIds, options);
+  const resolvedSpeakerId = resolveSpeakerId(options.speakerId, modelConfig);
+  const { audio, durations } = await runInference(ortInstance, phonemeIds, options, resolvedSpeakerId);
   
   // 3. Volume Scaling
   const volume = options.volume ?? 1.0;
@@ -170,7 +172,8 @@ async function handleSynthesize(
     durationMs,
     metadata: {
       generationTimeMs,
-      modelId: currentModelId, // Inject modelId for traceability
+      modelId: currentModelId,
+      speakerId: resolvedSpeakerId,
       phonemeIds,
       phonemes,
       durations: durations ? Array.from(durations) : undefined,
@@ -242,7 +245,7 @@ function phonemize(text: string, voice: string) {
   throw new Error("Phonemization failed");
 }
 
-async function runInference(ortInstance: any, phonemeIds: number[], options: any) {
+async function runInference(ortInstance: any, phonemeIds: number[], options: any, speakerId: number) {
   const { noise_scale, length_scale, noise_w } = modelConfig!.inference;
   
   const feeds: Record<string, any> = {
@@ -256,7 +259,7 @@ async function runInference(ortInstance: any, phonemeIds: number[], options: any
   };
 
   if (Object.keys(modelConfig!.speaker_id_map).length > 0) {
-    feeds.sid = new ortInstance.Tensor("int64", BigInt64Array.from([BigInt(0)]));
+    feeds.sid = new ortInstance.Tensor("int64", BigInt64Array.from([BigInt(speakerId)]));
   }
 
   const results = await ortSession!.run(feeds);
@@ -264,6 +267,26 @@ async function runInference(ortInstance: any, phonemeIds: number[], options: any
   const durations = results.durations ? results.durations.data as Float32Array : null;
   
   return { audio, durations };
+}
+
+/**
+ * Validates speakerId against the model's speaker_id_map.
+ * Returns the validated speakerId, or 0 with a warning if out of bounds.
+ */
+function resolveSpeakerId(requested: number | undefined, config: ModelConfig): number {
+  const speakerCount = Object.keys(config.speaker_id_map).length;
+  
+  // Single-speaker model or no speaker requested: always 0
+  if (speakerCount === 0) return 0;
+  
+  const sid = requested ?? 0;
+  
+  if (sid < 0 || sid >= speakerCount) {
+    warn(`speakerId ${sid} out of range (0-${speakerCount - 1}), falling back to 0`);
+    return 0;
+  }
+  
+  return sid;
 }
 
 function postMessage(msg: PiperWorkerMessageOut, options?: StructuredSerializeOptions) {

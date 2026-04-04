@@ -63,10 +63,20 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     // 2. Assign pending requests to idle workers
     const nextRequest = queue.find(r => !r.result && !isCurrentlyProcessing(r.requestId));
     if (nextRequest) {
-      // Pre-Synthesis Config Check (Mid-Queue Handoff)
-      // Wait for the active pool to match the request's intended model.
-      if (nextRequest.modelId && pool.getActiveModelId() !== nextRequest.modelId) {
-        return;
+      // Adaptive Handoff: If the pool has completed a transition,
+      // un-started requests adopt the new active model and speaker.
+      const activeModel = pool.getActiveModelId();
+      const targetModel = pool.getTargetModelId();
+      const isTransitioning = targetModel !== activeModel;
+
+      if (nextRequest.modelId && nextRequest.modelId !== activeModel) {
+        if (isTransitioning) {
+          // Pool is still transitioning — wait, don't block
+          return;
+        }
+        // Transition complete: adopt the new active config
+        nextRequest.modelId = activeModel ?? undefined;
+        nextRequest.speakerId = pool.getTargetSpeakerId();
       }
 
       const worker = pool.getNextAvailable();
@@ -79,7 +89,8 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
           requestId: nextRequest.requestId,
           speed: nextRequest.speed,
           pitch: nextRequest.pitch,
-          volume: nextRequest.volume
+          volume: nextRequest.volume,
+          speakerId: nextRequest.speakerId
         });
       }
     }
@@ -124,6 +135,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
           speed: options.speed ?? 1.0,
           pitch: options.pitch ?? 1.0,
           volume: options.volume ?? 1.0,
+          speakerId: options.speakerId ?? pool.getTargetSpeakerId(),
           modelId: pool.getTargetModelId() ?? undefined,
           resolve: (res) => {
             processingRequestIds.delete(requestId);

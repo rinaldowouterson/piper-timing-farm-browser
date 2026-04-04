@@ -75,7 +75,11 @@ class MockWorker {
                     audioData: new Float32Array(100), 
                     sampleRate: 22050, 
                     durationMs: 1000,
-                    metadata: { modelId: this.modelId, requestId: msg.requestId }
+                    metadata: { 
+                        modelId: this.modelId, 
+                        speakerId: msg.speakerId ?? 0,
+                        requestId: msg.requestId 
+                    }
                 } 
             }), 20);
         }

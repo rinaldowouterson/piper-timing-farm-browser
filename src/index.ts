@@ -8,5 +8,6 @@
 
 export { createPiperWorkerFarm } from './farm/create-piper-worker-farm';
 export { createPiperProvider } from './providers/create-piper-provider';
+export { createAssetDownloadController } from './farm/control-asset-download';
 export { PIPER_MODELS, PIPER_REPO_BASE_URL } from './expose-piper-models';
 export type * from './types';

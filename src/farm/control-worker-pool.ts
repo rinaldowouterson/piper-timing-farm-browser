@@ -18,6 +18,7 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
   let isInitialized = false;
   let activeModelId: string | null = null;
   let targetModelId: string | null = null;
+  let targetSpeakerId: number = 0;
   let currentConfig: PiperWorkerConfig | null = null;
 
   return {
@@ -25,6 +26,7 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
       currentConfig = config;
       activeModelId = config.modelId;
       targetModelId = config.modelId;
+      targetSpeakerId = 0;
       isInitialized = true;
 
       const initPromises = [];
@@ -117,12 +119,15 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
       isInitialized = false;
       activeModelId = null;
       targetModelId = null;
+      targetSpeakerId = 0;
     },
 
     isInitialized: () => isInitialized,
     getActiveModelId: () => activeModelId,
     getTargetModelId: () => targetModelId,
     setTargetModelId: (id: string) => { targetModelId = id; },
+    getTargetSpeakerId: () => targetSpeakerId,
+    setTargetSpeakerId: (id: number) => { targetSpeakerId = id; },
     getWorkerCount: () => workers.length,
     getBusyCount: () => workers.filter(w => w.busy).length,
     getWorkers: () => workers

@@ -1,10 +1,12 @@
 import type { 
   PiperWorkerFarm, 
   FarmConfig, 
-  AudioSynthesisResult 
+  AudioSynthesisResult,
+  DownloadState
 } from "../types";
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
+import { createAssetDownloadController } from "../farm/control-asset-download";
 import { FULL_ASSET_URLS } from "../worker/resolve-assets-full";
 import { PIPER_MODELS } from "../expose-piper-models";
 import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
@@ -18,11 +20,18 @@ import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
  *    and verifies it in the background while the current model continues 
  *    processing the queue.
  * 3. Once fully provisioned, it performs an atomic handoff (reinit).
+ * 4. Download prioritization ensures the last-selected model loads first.
+ * 5. Speaker ID flows per-request without triggering infrastructure changes.
  */
-export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () => string | null } {
+export function createPiperProvider(): PiperWorkerFarm & { 
+  getActiveModelId: () => string | null;
+  cancelDownload: (modelId: string) => Promise<void>;
+  getDownloadState: () => Map<string, DownloadState>;
+} {
   let farm: PiperWorkerFarm | null = null;
   let activeModelId: string | null = null;
   let loadingModelId: string | null = null;
+  const downloader = createAssetDownloadController();
 
   return {
     async init(config: FarmConfig) {
@@ -46,11 +55,11 @@ export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () 
         farm.prepareTransition(modelId);
       }
 
-      // 1. Download & Verify in background
-      await Promise.all([
-        resolveOpfsAsset(onnxUrl, modelId, "onnx"),
-        resolveOpfsAsset(jsonUrl, modelId, "onnx.json")
-      ]);
+      // Prioritize this model's download (pauses others)
+      downloader.prioritize(modelId);
+
+      // 1. Download & Verify via the download controller
+      await downloader.request(modelId, { onnx: onnxUrl, config: jsonUrl });
 
       // 2. Initial Setup or Handoff
       if (!farm) {
@@ -88,6 +97,7 @@ export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () 
     },
 
     terminate() {
+      downloader.cancelAll();
       farm?.terminate();
       farm = null;
       activeModelId = null;
@@ -110,6 +120,16 @@ export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () 
 
     isInitialized: () => farm?.isInitialized() ?? false,
     getActiveModelId: () => activeModelId,
+
+    /** Cancel a specific model's download. Purges OPFS partial files. */
+    async cancelDownload(modelId: string) {
+      await downloader.cancel(modelId);
+    },
+
+    /** Returns a snapshot of every model's download lifecycle. */
+    getDownloadState() {
+      return downloader.getState();
+    },
 
     get metrics() {
       return farm?.metrics || { queueLength: 0, busyWorkers: 0, totalWorkers: 0 };
