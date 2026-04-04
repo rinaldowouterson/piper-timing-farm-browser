@@ -164,7 +164,7 @@ Assets are served from your project's static directory (provisioned via `npx pip
 - Piper WASM: `/assets/piper_phonemize.wasm`
 - Piper Data: `/assets/piper_phonemize.data`
 - Piper JS: `/assets/piper_phonemize.js`
-- ONNX Runtime: `/assets/ort.wasm.min.mjs`, `/assets/ort-wasm-simd-threaded.mjs`
+- ONNX Runtime: `/assets/ort.wasm.min.mjs`, `/assets/ort-wasm-simd-threaded.mjs`, `/assets/ort-wasm-simd-threaded.wasm`
 
 ### Tier 2: CDN Assets
 
@@ -215,7 +215,22 @@ function processQueue() {
     const first = queue.shift()!;
     first.resolve(first.result as any);
   }
-  // 2. Assign pending requests to idle workers...
+
+  // 2. Assign pending requests to idle workers
+  const nextRequest = queue.find(r => !r.result && !isCurrentlyProcessing(r.requestId));
+  if (nextRequest) {
+    const worker = pool.getNextAvailable();
+    if (worker) {
+      worker.busy = true;
+      processingRequestIds.add(nextRequest.requestId);
+      worker.worker.postMessage({
+        type: 'synthesize',
+        text: nextRequest.text,
+        requestId: nextRequest.requestId,
+        // ... options
+      });
+    }
+  }
 }
 ```
 
@@ -282,7 +297,7 @@ All model and WASM assets are cached in the **Origin Private File System (OPFS)*
 
 1. **Check OPFS** — If asset exists, return immediately
 2. **Fetch from network** — If missing, download with Range support
-3. **Verify MD5** — Ensure binary integrity
+3. **Verify SHA-256** — Ensure binary integrity
 4. **Write to OPFS** — Store for future sessions
 
 **Implementation:** [`resolve-opfs-asset.ts`](src/utils/resolve-opfs-asset.ts)
@@ -292,7 +307,7 @@ export async function resolveOpfsAsset(
   url: string,
   modelId: string,
   extension: string,
-  expectedMd5?: string,
+  expectedSha256?: string,
   options?: { signal?: AbortSignal; prioritizeSelected?: boolean }
 ): Promise<ArrayBuffer> {
   const root = await navigator.storage.getDirectory();
@@ -313,8 +328,8 @@ export async function resolveOpfsAsset(
   await writable.write(buffer);
   await writable.close();
   
-  // 4. Verify MD5 if provided
-  if (expectedMd5) await verifyMd5(finalBuffer, expectedMd5, url);
+  // 4. Verify SHA-256 if provided
+  if (expectedSha256) await verifySha256(finalBuffer, expectedSha256, url);
   
   return finalBuffer;
 }
@@ -357,7 +372,7 @@ queued → downloading → complete
 const downloader = createAssetDownloadController();
 
 // Request a model download
-await downloader.request(modelId, { onnx, config }, { onnx: 'md5hash...' });
+await downloader.request(modelId, { onnx, config }, { onnx: 'sha256hash...' });
 
 // Prioritize the currently selected model (pauses others)
 downloader.prioritize(modelId);
@@ -633,7 +648,8 @@ npx piper-farm init
 | `piper_phonemize.data` | ~20MB | eSpeak-ng language data |
 | `piper_phonemize.js` | ~10KB | Emscripten glue code |
 | `ort.wasm.min.mjs` | ~150KB | ONNX Runtime minimal module |
-| `ort-wasm-simd-threaded.mjs` | ~12MB | ONNX Runtime WASM (SIMD+threads) |
+| `ort-wasm-simd-threaded.mjs` | ~12MB | ONNX Runtime WASM (SIMD+threads) glue |
+| `ort-wasm-simd-threaded.wasm` | ~15MB | ONNX Runtime WASM engine binary |
 
 ---
 
@@ -669,20 +685,17 @@ interface PiperModelDefinition {
 
 | Language | Model Name | Quality | License | Dataset / Training info |
 |---|---|---|---|---|
-| English (en_US) | bryce | medium | Public Domain | Recorded by Bryce Beattie |
-| English (en_US) | kristin | medium | CC-BY 4.0 | Recorded by Kristin (LibriVox) |
-| English (en_US) | arctic | medium | Public Domain | CMU Arctic dataset |
-| English (en_US) | libritts | high | CC-BY 4.0 | LibriTTS dataset |
-| English (en_US) | ljspeech | high | Public Domain | LJSpeech dataset |
-| English (en_GB) | cori | medium | CC-BY 4.0 | Recorded by Cori |
-| German (de_DE) | mls | medium | CC-BY 4.0 | Multi-lingual LibriSpeech |
-| French (fr_FR) | mls | medium | CC-BY 4.0 | Multi-lingual LibriSpeech |
-| Dutch (nl_BE) | rdh | medium | CC0 | Trained from scratch |
-| Dutch (nl_NL) | alex | medium | CC0 | Finetuned from rdh (Safe) |
-| Dutch (nl_NL) | mls | medium | CC-BY 4.0 | Multi-lingual LibriSpeech |
-| Swedish (sv_SE) | nst | medium | CC0 | Trained from scratch (KBLab) |
-| Swedish (sv_SE) | alma | medium | CC-BY 4.0 | NST Swedish TTS dataset |
-| Ukrainian (uk_UA) | ukrainian_tts | medium | CC-BY 4.0 | Multi-speaker Ukrainian |
+| English (en_US) | Bryce | medium | Public Domain | Recorded by Bryce Beattie |
+| English (en_US) | Ljspeech | high | Public Domain | LJSpeech dataset |
+| English (en_US) | Kristin | medium | CC-BY 4.0 | Recorded by Kristin (LibriVox) |
+| English (en_US) | Arctic | medium | Public Domain | CMU Arctic dataset |
+| English (en_GB) | Cori | medium | CC-BY 4.0 | Recorded by Cori |
+| English (en_US) | Libritts | high | CC-BY 4.0 | LibriTTS dataset (904 speakers) |
+| Dutch (nl_NL) | Alex | medium | CC0 | Finetuned from rdh (Safe) |
+| Dutch (nl_BE) | Rdh | medium | CC0 | Trained from scratch |
+| Swedish (sv_SE) | Alma | medium | CC-BY 4.0 | NST Swedish TTS dataset |
+| Swedish (sv_SE) | Nst | medium | CC0 | Trained from scratch (KBLab) |
+| Ukrainian (uk_UA) | UkrainianTts | medium | CC-BY 4.0 | Multi-speaker Ukrainian |
 
 **Model Source:** HuggingFace repository at `PIPER_REPO_BASE_URL`:
 
@@ -696,16 +709,17 @@ https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/
 
 ### Zero-Copy Transfer
 
-All audio data and callback results use `postMessage` with `transfer` to avoid serialization overhead:
+All audio data and callback results use `postMessage` with `transfer` to avoid serialization overhead. The following data types are automatically detected and transferred (not copied) when returned from a worker-thread callback:
 
-```typescript
-// Worker: Transfer audio buffer directly
-postMessage({ type: 'success', result, callbackResult }, {
-  transfer: [audio.buffer, ...collectTransferables(callbackResult)]
-});
-```
+| Type | Description |
+|------|-------------|
+| `ArrayBuffer` | Raw binary memory buffer |
+| `Float32Array` | Audio samples and timing data |
+| `Uint16Array` | Viseme/Phoneme mappings |
+| `Int32Array` | Morph target indices |
+| **Nested Objects** | The transfer logic recursively walks objects to find and transfer all contained buffers |
 
-**Effect:** The `Float32Array` buffer is transferred (not copied) to the main thread, reducing memory pressure and latency.
+**Effect:** Memory is transferred directly between the worker and main thread. The worker loses access to the memory, and the main thread gains it with zero latency cost.
 
 ### Single-Threaded Workers
 
@@ -754,31 +768,8 @@ if (downloadedBytes > 0) {
 | Web Workers | Parallel synthesis | All modern browsers |
 | OPFS | Asset caching | Chrome 86+, Firefox 111+, Safari 15.2+ |
 | SHA-256 (Web Crypto) | Integrity verification | All modern browsers |
-| SharedArrayBuffer | ONNX threading | Requires COOP/COEP headers |
 
-### Security Headers
-
-For ONNX Runtime's threaded WASM, your server must send:
-
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-**Vite Dev Server:** Add to `vite.config.ts`:
-
-```typescript
-export default defineConfig({
-  server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp'
-    }
-  }
-});
-```
-
-**Note:** These headers are only required for threaded WASM. The library enforces single-threaded workers (`numThreads = 1`), which works without SharedArrayBuffer in most browsers.
+**Note:** The library enforces single-threaded workers (`numThreads = 1`), which works out-of-the-box in all modern browsers without special headers or `SharedArrayBuffer` requirements.
 
 ---
 
