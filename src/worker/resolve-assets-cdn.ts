@@ -1,8 +1,9 @@
 import type { PiperPaths, OnnxRuntimePaths } from '../types';
 
 export const ONNX_CDN_URLS: OnnxRuntimePaths = {
-  wasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/ort-wasm-simd-threaded.wasm',
-  mjs:  'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/ort.all.min.mjs',
+	wasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/',
+	mjs: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/ort.wasm.min.mjs',
+	mjsHelper: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/ort-wasm-simd-threaded.mjs',
 };
 
 export const PIPER_CDN_URLS: PiperPaths = {

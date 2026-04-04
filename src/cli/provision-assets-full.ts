@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const __dirname = import.meta.dirname;
+const __dirname = (import.meta as any).dirname;
 
 /**
  * Universal Provisioning CLI for Piper Timing Farm.
@@ -42,19 +42,24 @@ async function provision() {
   // Structure: 
   //   node_modules/piper-timing-farm/dist/cli.js
   //   node_modules/piper-timing-farm/dist/worker/assets/
-  const sourceDir = path.resolve(__dirname, 'worker/assets');
+  const sourceBinDir = path.resolve(__dirname, 'worker/assets');
+  const sourceScriptDir = path.resolve(__dirname, 'assets');
 
-  if (!fs.existsSync(sourceDir)) {
-    // Development fallback (if running directly from src for some reason)
-    const devSourceDir = path.resolve(__dirname, '../../src/worker/assets');
-    if (!fs.existsSync(devSourceDir)) {
-      console.error(`Error: Could not find source assets. Checked: \n- ${sourceDir}\n- ${devSourceDir}`);
-      process.exit(1);
+  // Unified Provisioning Strategy
+  const copyJob = (srcDir: string) => {
+    if (fs.existsSync(srcDir)) {
+      copyFiles(srcDir, absTargetDir, targetDir);
     }
-    // Use dev source if found
-    copyFiles(devSourceDir, absTargetDir, targetDir);
+  };
+
+  if (!fs.existsSync(sourceBinDir)) {
+    // Development fallback (running from src)
+    const devSourceBinDir = path.resolve(__dirname, '../../src/worker/assets');
+    copyJob(devSourceBinDir);
   } else {
-    copyFiles(sourceDir, absTargetDir, targetDir);
+    // Production path (running from node_modules/dist)
+    copyJob(sourceBinDir);
+    copyJob(sourceScriptDir);
   }
 }
 

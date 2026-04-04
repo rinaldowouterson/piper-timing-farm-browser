@@ -73,6 +73,7 @@ export interface CallbackModuleConfig {
 export interface OnnxRuntimePaths {
   wasm: string;
   mjs: string;
+  mjsHelper: string;
 }
 
 /**
@@ -135,6 +136,7 @@ export interface PiperWorkerFarm {
   isInitialized(): boolean;
   getActiveModelId(): string | null;
   prepareTransition(targetModelId: string): void;
+  clearCache(): Promise<void>;
 	readonly metrics: {
 		queueLength: number;
 		busyWorkers: number;
