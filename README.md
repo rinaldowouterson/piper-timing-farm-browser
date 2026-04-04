@@ -142,7 +142,8 @@ Main Thread                    Worker Pool
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| [`createPiperProvider`](src/providers/create-piper-provider.ts) | Provider | High-level API with download management |
+| `create-piper-provider()` | Provider | High-level API with download management |
+| `piper-timing-farm/worker` | `handleSynthesize()` | Direct worker logic (Advanced) |
 | [`createPiperWorkerFarm`](src/farm/create-piper-worker-farm.ts) | Farm | Queue management and worker distribution |
 | [`process-piper-synthesis.worker`](src/worker/process-piper-synthesis.worker.ts) | Worker | ONNX inference and phonemization |
 | [`createAssetDownloadController`](src/farm/control-asset-download.ts) | Downloader | Model asset download orchestration |
@@ -305,7 +306,7 @@ All model and WASM assets are cached in the **Origin Private File System (OPFS)*
 
 1. **Check OPFS** — If asset exists, return immediately
 2. **Fetch from network** — If missing, download with Range support
-3. **Verify SHA-256** — Ensure binary integrity
+3. **Verify SHA-256** — High-performance one-time integrity check performed during the download/caching phase. Subsequent loads from OPFS are trusted for maximum speed.
 4. **Write to OPFS** — Store for future sessions
 
 **Implementation:** [`resolve-opfs-asset.ts`](src/utils/resolve-opfs-asset.ts)
@@ -504,6 +505,28 @@ postMessage({ type: 'success', result, callbackResult }, {
 
 ## API Reference
 
+The CDN entry point provides byte-for-byte parity with Tier 1, including full download management and model transition orchestration.
+
+---
+
+### Advanced: Direct Worker Usage
+
+For power users building custom orchestration, the core synthesis worker logic is exported separately. This allows you to host the worker yourself or integrate it into an existing worker pool.
+
+```typescript
+// Define your own worker or use the built-in one
+import { handleSynthesize } from 'piper-timing-farm/worker';
+
+self.onmessage = async (e) => {
+  const { type, text, requestId, speed, volume, speakerId } = e.data;
+  if (type === 'synthesize') {
+    await handleSynthesize(text, requestId, { speed, volume, speakerId });
+  }
+};
+```
+
+---
+
 ### `createPiperProvider()`
 
 High-level API with download management and model switching. You switch models efficiently by simply calling `provider.init()` again with the new target model ID; it will transparently orchestrate background download and shadow pool handoff.
@@ -553,19 +576,19 @@ farm.metrics: { queueLength, busyWorkers, totalWorkers };
 
 ```typescript
 interface FarmConfig {
-  voiceId: string;                    // Voice identifier (usually matches modelId)
-  modelId: string;                    // Model identifier (e.g., 'en_US-bryce-medium')
-  modelUrls?: {                       // Optional: Custom model URLs
+  voiceId: string;            // Voice identifier (usually matches modelId)
+  modelId: string;            // Model identifier (e.g., 'en_US-bryce-medium')
+  cpuInstances?: number;      // Number of parallel workers (default: 2)
+  prioritizeSelected?: boolean; // Download prioritization (default: true)
+  modelUrls?: {               // Optional: Custom model URLs
     onnx: string;
     config: string;
   };
-  onnxRuntimePaths?: OnnxRuntimePaths; // Optional: Custom ONNX paths (Tier 1 default)
-  piperPaths?: PiperPaths;            // Optional: Custom Piper paths (Tier 1 default)
-  cpuInstances: number;               // Number of parallel workers (default: 2)
-  callbackModule?: CallbackModuleConfig; // Optional: Worker-thread callback
-  prioritizeSelected?: boolean;       // Download prioritization (default: true)
-  modelSha256?: string;               // Optional: specific SHA-256 integrity validation
-  configSha256?: string;              // Optional: specific SHA-256 integrity validation
+  onnxRuntimePaths?: OnnxRuntimePaths;
+  piperPaths?: PiperPaths;
+  callbackModule?: CallbackModuleConfig;
+  modelSha256?: string;       // Optional: SHA-256 for model integrity
+  configSha256?: string;      // Optional: SHA-256 for config integrity
 }
 ```
 
@@ -574,7 +597,6 @@ interface FarmConfig {
 ```typescript
 interface SynthesizeOptions {
   speed?: number;     // Speech rate multiplier (default: 1.0)
-  pitch?: number;     // Pitch adjustment (default: 1.0)
   volume?: number;    // Volume scaling (default: 1.0)
   speakerId?: number; // Speaker selection for multi-speaker models
 }
@@ -622,7 +644,6 @@ interface PiperMetadata {
   totalAudioDurationMs: number;
   sampleRate: number;
   hopSize: number;            // VITS hop size (256)
-  phonemeIdMap?: Record<string, number[]>; // Map of phonemes to IDs
 }
 ```
 

@@ -17,6 +17,7 @@ export function createAssetDownloadController(): DownloadController {
     promise: Promise<void>;
     urls: { onnx: string; config: string };
     expectedSha256?: { onnx?: string; config?: string };
+    options?: { prioritizeSelected?: boolean };
   }>();
 
   /** Internal: execute a single model download (both .onnx and .onnx.json). */
@@ -25,7 +26,8 @@ export function createAssetDownloadController(): DownloadController {
     urls: { onnx: string; config: string },
     controller: AbortController,
     state: DownloadState,
-    expectedSha256?: { onnx?: string; config?: string }
+    expectedSha256?: { onnx?: string; config?: string },
+    options?: { prioritizeSelected?: boolean }
   ): Promise<void> {
     state.state = 'downloading';
 
@@ -36,7 +38,7 @@ export function createAssetDownloadController(): DownloadController {
         modelId,
         "onnx.json",
         expectedSha256?.config,
-        { signal: controller.signal }
+        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected }
       );
 
       // Check abort between downloads
@@ -47,7 +49,7 @@ export function createAssetDownloadController(): DownloadController {
         modelId,
         "onnx",
         expectedSha256?.onnx,
-        { signal: controller.signal }
+        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected }
       );
 
       if (!controller.signal.aborted) {
@@ -97,7 +99,8 @@ export function createAssetDownloadController(): DownloadController {
         entry.urls,
         newController,
         entry.state,
-        entry.expectedSha256
+        entry.expectedSha256,
+        entry.options
       ).catch(() => {
         // Error state already set inside executeDownload
       });
@@ -105,28 +108,29 @@ export function createAssetDownloadController(): DownloadController {
   }
 
   return {
-    request(modelId, urls, expectedSha256) {
-      // Deduplication: if already tracked and not cancelled/error, return existing
+    request(
+      modelId: string, 
+      urls: { onnx: string; config: string }, 
+      expectedSha256?: { onnx?: string; config?: string },
+      options?: { prioritizeSelected?: boolean }
+    ): Promise<void> {
       const existing = downloads.get(modelId);
       if (existing && existing.state.state !== 'cancelled' && existing.state.state !== 'error') {
         return existing.promise;
       }
-
-      const controller = new AbortController();
+      
       const state: DownloadState = {
         modelId,
         state: 'queued',
         bytesDownloaded: 0,
         bytesTotal: 0,
-        progress: 0,
+        progress: 0
       };
 
-      const promise = executeDownload(modelId, urls, controller, state, expectedSha256).catch(() => {
-        // Error state already set inside executeDownload
-      });
-
-      downloads.set(modelId, { state, controller, promise, urls, expectedSha256 });
-
+      const controller = new AbortController();
+      const promise = executeDownload(modelId, urls, controller, state, expectedSha256, options);
+      
+      downloads.set(modelId, { state, controller, promise, urls, expectedSha256, options });
       return promise;
     },
 

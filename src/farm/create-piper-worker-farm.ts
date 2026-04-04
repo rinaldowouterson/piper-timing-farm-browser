@@ -88,7 +88,6 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
           text: nextRequest.text,
           requestId: nextRequest.requestId,
           speed: nextRequest.speed,
-          pitch: nextRequest.pitch,
           volume: nextRequest.volume,
           speakerId: nextRequest.speakerId
         });
@@ -113,7 +112,8 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
         piperPaths,
         callbackModule: config.callbackModule
       };
-      await pool.init(piperConfig, config.cpuInstances);
+      const cpuInstances = config.cpuInstances ?? 2;
+      await pool.init(piperConfig, cpuInstances);
       processQueue();
     },
 
@@ -133,7 +133,6 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
           requestId,
           text,
           speed: options.speed ?? 1.0,
-          pitch: options.pitch ?? 1.0,
           volume: options.volume ?? 1.0,
           speakerId: options.speakerId ?? pool.getTargetSpeakerId(),
           modelId: pool.getTargetModelId() ?? undefined,

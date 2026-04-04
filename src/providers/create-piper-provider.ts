@@ -62,7 +62,11 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       await downloader.request(
         modelId, 
         { onnx: onnxUrl, config: jsonUrl },
-        { onnx: modelEntry?.modelSha256, config: modelEntry?.configSha256 }
+        { 
+          onnx: config.modelSha256 || modelEntry?.modelSha256, 
+          config: config.configSha256 || modelEntry?.configSha256 
+        },
+        { prioritizeSelected: config.prioritizeSelected ?? true }
       );
 
       // 2. Initial Setup or Handoff
@@ -106,14 +110,14 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
     },
 
     async clearPiperModelCache() {
-      // 1. Wipe storage (session-independent)
-      await resolveCacheClearing();
-
-      // 2. Terminate active instance if it exists
+      // 1. Terminate active instance first to release OPFS locks
       if (farm) {
         farm.terminate();
         farm = null;
       }
+      
+      // 2. Wipe storage (safe after handles are closed)
+      await resolveCacheClearing();
       
       activeModelId = null;
       loadingModelId = null;

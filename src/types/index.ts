@@ -10,7 +10,6 @@ export interface PiperMetadata {
 	totalAudioDurationMs: number;
 	sampleRate: number;
 	hopSize: number;
-	phonemeIdMap?: Record<string, number[]>;
   /** The ID of the model used for this specific result. */
   modelId?: string;
 }
@@ -33,7 +32,6 @@ export interface PendingRequest {
 	requestId: string;
 	text: string;
 	speed: number;
-	pitch: number;
 	volume: number;
 	speakerId: number;
 	resolve: (result: AudioSynthesisResult & { callbackResult?: any }) => void;
@@ -114,8 +112,8 @@ export interface FarmConfig {
   };
 	onnxRuntimePaths?: OnnxRuntimePaths;
 	piperPaths?: PiperPaths;
-  /** Total number of worker instances to use for parallel synthesis. */
-	cpuInstances: number;
+  /** Total number of worker instances to use for parallel synthesis. Defaults to 2. */
+	cpuInstances?: number;
   /** Optional worker-thread callback for off-thread processing. */
   callbackModule?: CallbackModuleConfig;
   /** Instructs downlaod manager to prioritize this model. Default is true. */
@@ -127,7 +125,6 @@ export interface FarmConfig {
 
 export interface SynthesizeOptions {
   speed?: number;
-  pitch?: number;
   volume?: number;
   speakerId?: number;
 }
@@ -163,7 +160,6 @@ export type PiperWorkerMessageIn =
 			text: string;
 			requestId: string;
 			speed?: number;
-			pitch?: number;
 			volume?: number;
 			speakerId?: number;
 	  };
@@ -203,9 +199,10 @@ export interface DownloadState {
 export interface DownloadController {
   /** Start or resume a model download. Deduplicates by modelId. */
   request(
-    modelId: string, 
+    modelId: string,
     urls: { onnx: string; config: string }, 
-    expectedSha256?: { onnx?: string; config?: string }
+    expectedSha256?: { onnx?: string; config?: string },
+    options?: { prioritizeSelected?: boolean }
   ): Promise<void>;
   /** Pause all other downloads and prioritize the given model. */
   prioritize(modelId: string): void;

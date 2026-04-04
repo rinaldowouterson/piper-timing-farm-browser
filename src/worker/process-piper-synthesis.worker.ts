@@ -48,7 +48,6 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
       case "synthesize":
         await handleSynthesize(msg.text, msg.requestId, {
           speed: msg.speed,
-          pitch: msg.pitch,
           volume: msg.volume,
           speakerId: msg.speakerId
         });
@@ -142,7 +141,7 @@ async function handleLoadCallback(modulePath: string, functionName: string) {
 async function handleSynthesize(
   text: string, 
   requestId: string, 
-  options: { speed?: number; pitch?: number; volume?: number; speakerId?: number }
+  options: { speed?: number; volume?: number; speakerId?: number }
 ) {
   if (!ortSession || !phonemizerModule || !modelConfig) {
     throw new Error("Worker not initialized");

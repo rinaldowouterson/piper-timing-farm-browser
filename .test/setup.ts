@@ -109,7 +109,12 @@ class MockWorker {
 
 vi.stubGlobal('Worker', MockWorker);
 
-// --- 3. Persistence Cleanup ---
+// --- 3. SHA-256 Mock ---
+vi.mock('../src/utils/resolve-sha256', () => ({
+    verifySha256: vi.fn().mockResolvedValue(true)
+}));
+
+// --- 4. Persistence Cleanup ---
 beforeEach(() => {
     mockOpfsFiles.clear();
     vi.clearAllMocks();
