@@ -133,10 +133,10 @@ export interface PiperWorkerFarm {
 		options?: { speed?: number; pitch?: number; volume?: number }
 	): Promise<AudioSynthesisResult & { callbackResult?: any }>;
 	terminate(): void;
+  clearPiperModelCache(): Promise<void>;
   isInitialized(): boolean;
   getActiveModelId(): string | null;
   prepareTransition(targetModelId: string): void;
-  clearCache(): Promise<void>;
 	readonly metrics: {
 		queueLength: number;
 		busyWorkers: number;

@@ -93,6 +93,14 @@ export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () 
       loadingModelId = null;
     },
 
+    async clearPiperModelCache() {
+      if (farm) {
+        await farm.clearPiperModelCache();
+        activeModelId = null;
+        loadingModelId = null;
+      }
+    },
+
     isInitialized: () => farm?.isInitialized() ?? false,
     getActiveModelId: () => activeModelId,
 

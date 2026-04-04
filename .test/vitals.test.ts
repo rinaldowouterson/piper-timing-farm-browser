@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { createPiperWorkerFarm } from '../src/farm/create-piper-worker-farm';
 
 /**
  * Unified Verification: Global Orchestration over Asset Transfers.
@@ -64,5 +65,21 @@ describe('CLI > Unified Framework Orchestration', () => {
         } catch (e) {
             // Expected failure
         }
+    });
+
+    it('Should successfully dispose of model cache (clearPiperModelCache)', async () => {
+        const farm = createPiperWorkerFarm();
+        
+        // Mock OPFS for Vitest/JSDOM
+        const mockRemoveEntry = vi.fn().mockResolvedValue(undefined);
+        (global as any).navigator.storage = {
+            getDirectory: vi.fn().mockResolvedValue({
+                removeEntry: mockRemoveEntry
+            })
+        };
+
+        await farm.clearPiperModelCache();
+        expect(mockRemoveEntry).toHaveBeenCalledWith('voices', { recursive: true });
+        expect(farm.isInitialized()).toBe(false);
     });
 });

@@ -143,6 +143,27 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       processingRequestIds.clear();
     },
 
+    async clearPiperModelCache() {
+      // 1. Force release all OPFS locks by killing workers
+      pool.terminate();
+      queue.length = 0;
+      processingRequestIds.clear();
+
+      // 2. Perform the nuke
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry('voices', { recursive: true });
+      } catch (err) {
+        // Idempotent: Ignore if it doesn't exist. 
+        // We use string match here because JSDOM/Node might not have the native DOMException symbol.
+        if (err instanceof Error && err.name === 'NotFoundError') {
+          return;
+        }
+        console.error('[PiperFarm] Cache clear failed:', err);
+        throw err;
+      }
+    },
+
     isInitialized: () => pool.isInitialized(),
     getActiveModelId: () => pool.getActiveModelId(),
 
