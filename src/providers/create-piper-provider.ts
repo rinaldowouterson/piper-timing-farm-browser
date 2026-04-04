@@ -7,6 +7,7 @@ import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
 import { FULL_ASSET_URLS } from "../worker/resolve-assets-full";
 import { PIPER_MODELS } from "../expose-piper-models";
+import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
 
 /**
  * High-level Piper Provider with "Asshole-Proof" background model switching.
@@ -94,11 +95,17 @@ export function createPiperProvider(): PiperWorkerFarm & { getActiveModelId: () 
     },
 
     async clearPiperModelCache() {
+      // 1. Wipe storage (session-independent)
+      await resolveCacheClearing();
+
+      // 2. Terminate active instance if it exists
       if (farm) {
-        await farm.clearPiperModelCache();
-        activeModelId = null;
-        loadingModelId = null;
+        farm.terminate();
+        farm = null;
       }
+      
+      activeModelId = null;
+      loadingModelId = null;
     },
 
     isInitialized: () => farm?.isInitialized() ?? false,

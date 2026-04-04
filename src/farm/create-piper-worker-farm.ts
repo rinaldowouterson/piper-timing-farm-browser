@@ -8,6 +8,7 @@ import type {
 import { createWorkerPool } from "./control-worker-pool";
 import { ONNX_ASSET_URLS } from "../worker/resolve-assets-onnxruntime";
 import { PIPER_ASSET_URLS } from "../worker/resolve-assets-piper";
+import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
 
 /**
  * Creates the high-performance Piper worker farm.
@@ -150,18 +151,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       processingRequestIds.clear();
 
       // 2. Perform the nuke
-      try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry('voices', { recursive: true });
-      } catch (err) {
-        // Idempotent: Ignore if it doesn't exist. 
-        // We use string match here because JSDOM/Node might not have the native DOMException symbol.
-        if (err instanceof Error && err.name === 'NotFoundError') {
-          return;
-        }
-        console.error('[PiperFarm] Cache clear failed:', err);
-        throw err;
-      }
+      await resolveCacheClearing();
     },
 
     isInitialized: () => pool.isInitialized(),
