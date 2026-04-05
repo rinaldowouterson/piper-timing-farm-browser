@@ -145,8 +145,27 @@ vi.mock('../src/utils/resolve-sha256', () => ({
     verifySha256: vi.fn().mockResolvedValue(true)
 }));
 
-// --- 4. Persistence Cleanup ---
+// --- 4. Hugging Face Hub Mock ---
+vi.mock('@huggingface/hub', () => ({
+    downloadFile: vi.fn().mockResolvedValue({
+        size: 100,
+        stream: () => new ReadableStream({
+            start(controller) {
+                controller.enqueue(new Uint8Array(100));
+                controller.close();
+            }
+        })
+    })
+}));
+
+// --- 6. Persistence Cleanup ---
 beforeEach(() => {
     mockOpfsFiles.clear();
     vi.clearAllMocks();
 });
+
+// Suppress console.error during tests globally to keep output clean,
+// since testing error states intentionally triggers expected errors.
+// Note: We assign it directly because local test `errorSpy.mockRestore()` 
+// would otherwise restore it to the loud original function.
+console.error = vi.fn();

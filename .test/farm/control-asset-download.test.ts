@@ -22,7 +22,13 @@ describe('Download Controller', () => {
         mockFetch.mockResolvedValue({
             ok: true,
             status: 200,
-            arrayBuffer: () => Promise.resolve(new ArrayBuffer(100)),
+            headers: { get: () => '100' },
+            body: new ReadableStream({
+                start(controller) {
+                    controller.enqueue(new Uint8Array(100));
+                    controller.close();
+                }
+            })
         });
     });
 
@@ -210,7 +216,13 @@ describe('Download Controller', () => {
                     return Promise.resolve({
                         ok: true,
                         status: 200,
-                        arrayBuffer: () => Promise.resolve(new ArrayBuffer(100)),
+                        headers: { get: () => '100' },
+                        body: new ReadableStream({
+                            start(controller) {
+                                controller.enqueue(new Uint8Array(100));
+                                controller.close();
+                            }
+                        })
                     });
                 }
                 return new Promise((resolve, reject) => {
@@ -228,7 +240,13 @@ describe('Download Controller', () => {
                     return Promise.resolve({
                         ok: true,
                         status: 200,
-                        arrayBuffer: () => Promise.resolve(new ArrayBuffer(100)),
+                        headers: { get: () => '100' },
+                        body: new ReadableStream({
+                            start(controller) {
+                                controller.enqueue(new Uint8Array(100));
+                                controller.close();
+                            }
+                        })
                     });
                 }
                 return new Promise((resolve, reject) => {
@@ -243,7 +261,13 @@ describe('Download Controller', () => {
             return Promise.resolve({
                 ok: true,
                 status: 200,
-                arrayBuffer: () => Promise.resolve(new ArrayBuffer(100)),
+                headers: { get: () => '100' },
+                body: new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new Uint8Array(100));
+                        controller.close();
+                    }
+                })
             });
         });
 

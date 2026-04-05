@@ -1,4 +1,13 @@
 import { verifySha256 } from "./resolve-sha256";
+import { downloadFile } from "@huggingface/hub";
+
+function extractHFRepoPath(url: string): { repo: string; path: string; revision: string } | null {
+  const match = url.match(/^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/resolve\/([^/]+)\/(.+)$/);
+  if (match) {
+    return { repo: match[1], revision: match[2], path: match[3] };
+  }
+  return null;
+}
 
 /**
  * OPFS (Origin Private File System) Asset Resolver.
@@ -22,8 +31,9 @@ export async function resolveOpfsAsset(
   modelId: string,
   extension: string,
   expectedSha256?: string,
-  options?: { signal?: AbortSignal; prioritizeSelected?: boolean }
+  options?: { signal?: AbortSignal; prioritizeSelected?: boolean; onProgress?: (downloaded: number, total: number) => void }
 ): Promise<ArrayBuffer> {
+
   const filename = `${modelId}.${extension}`;
   
   try {
@@ -52,47 +62,95 @@ export async function resolveOpfsAsset(
     }
 
     // 2. Fetch from Network with Range and Abort Support
-    const headers: Record<string, string> = {};
-    if (downloadedBytes > 0) {
-      headers['Range'] = `bytes=${downloadedBytes}-`;
+    let stream: ReadableStream<Uint8Array>;
+    let totalBytes = 0;
+    const hfInfo = extractHFRepoPath(url);
+
+    if (hfInfo) {
+      // Hugging Face Hub (Xet Protocol)
+      const blob = await downloadFile({
+        repo: hfInfo.repo,
+        revision: hfInfo.revision,
+        path: hfInfo.path,
+      });
+      if (!blob) throw new Error("Failed to resolve HF file");
+      
+      // Xet fetches internally construct the full file stream; we overwrite from position 0.
+      downloadedBytes = 0;
+      totalBytes = blob.size;
+      stream = blob.stream() as ReadableStream<Uint8Array>;
+    } else {
+      // Standard Fetch
+      const headers: Record<string, string> = {};
+      if (downloadedBytes > 0) {
+        headers['Range'] = `bytes=${downloadedBytes}-`;
+      }
+
+      const fetchOptions: RequestInit = {
+        headers,
+        signal: options?.signal,
+      };
+      
+      if (options?.prioritizeSelected) {
+        (fetchOptions as any).priority = 'high';
+      }
+
+      const response = await fetch(url, fetchOptions);
+      
+      if (response.status === 416) {
+        const fileHandle = await voicesDir.getFileHandle(filename);
+        return await (await fileHandle.getFile()).arrayBuffer();
+      }
+      
+      if (!response.ok && response.status !== 206) {
+        throw new Error(`Failed to fetch asset: ${response.statusText}`);
+      }
+      if (!response.body) {
+        throw new Error(`Response body is null for ${url}`);
+      }
+      
+      // Estimate total capacity
+      const contentLen = Number(response.headers.get("Content-Length")) || 0;
+      totalBytes = response.status === 206 ? downloadedBytes + contentLen : contentLen;
+      
+      // Reset if not a partial response
+      if (response.status !== 206) {
+        downloadedBytes = 0;
+      }
+      
+      stream = response.body;
     }
 
-    const fetchOptions: RequestInit = {
-      headers,
-      signal: options?.signal,
-    };
-    
-    // priority hint for modern browsers
-    if (options?.prioritizeSelected) {
-      (fetchOptions as any).priority = 'high';
-    }
-
-    const response = await fetch(url, fetchOptions);
-    
-    if (response.status === 416) {
-      // Range Not Satisfiable -> The stored file might already be complete or corrupted,
-      // fallback to returning what we have.
-      const fileHandle = await voicesDir.getFileHandle(filename);
-      return await (await fileHandle.getFile()).arrayBuffer();
-    }
-    
-    if (!response.ok && response.status !== 206) throw new Error(`Failed to fetch asset: ${response.statusText}`);
-    
-    const buffer = await response.arrayBuffer();
-    
-    // 3. Write/Append to OPFS
+    // 3. Write/Append to OPFS via Stream
     const fileHandle = await voicesDir.getFileHandle(filename, { create: true });
     // @ts-ignore
-    const writable = await fileHandle.createWritable({ keepExistingData: response.status === 206 });
+    const writable = await fileHandle.createWritable({ keepExistingData: true });
     
-    if (response.status === 206) {
-      await writable.write({ type: 'write', position: downloadedBytes, data: buffer });
-    } else {
-      await writable.write(buffer);
+    let position = downloadedBytes;
+    const reader = stream.getReader();
+
+    try {
+      while (true) {
+        if (options?.signal?.aborted) {
+          throw new DOMException("Aborted", "AbortError");
+        }
+        
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        await writable.write({ type: 'write', position, data: value as any });
+        position += value.length;
+
+        if (options?.onProgress) {
+          options.onProgress(position, totalBytes || position);
+        }
+      }
+    } finally {
+      await writable.close();
+      reader.releaseLock();
     }
-    await writable.close();
     
-    // Re-read entire file for SHA-256 verification if we appended
+    // Re-read entire file for SHA-256 verification and return
     const finalFile = await fileHandle.getFile();
     const finalBuffer = await finalFile.arrayBuffer();
 

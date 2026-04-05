@@ -314,9 +314,8 @@ All model and WASM assets are cached in the **Origin Private File System (OPFS)*
 export async function resolveOpfsAsset(
   url: string,
   modelId: string,
-  extension: string,
-  expectedSha256?: string,
-  options?: { signal?: AbortSignal; prioritizeSelected?: boolean }
+  // ...
+  options?: { signal?: AbortSignal; prioritizeSelected?: boolean; onProgress?: (downloaded: number, total: number) => void }
 ): Promise<ArrayBuffer> {
   const root = await navigator.storage.getDirectory();
   const voicesDir = await root.getDirectoryHandle("voices", { create: true });
@@ -328,12 +327,22 @@ export async function resolveOpfsAsset(
     if (file.size > 0) return await file.arrayBuffer();
   } catch { /* Not found, proceed to fetch */ }
   
-  // 2. Fetch with Range support (resumable downloads)
-  const response = await fetch(url, fetchOptions);
+  // 2. Fetch using Stream (with Hugging Face Xet acceleration if applicable)
+  // Xet Protocol handles multi-threaded chunk fetching behind the scenes for HF URLs
+  const stream = await getReadableStream(url, downloadedBytes); 
   
-  // 3. Write/Append to OPFS
-  const writable = await fileHandle.createWritable({ keepExistingData: isRange });
-  await writable.write(buffer);
+  // 3. Write to OPFS via Stream (Zero-memory-buffering)
+  const writable = await fileHandle.createWritable({ keepExistingData: true });
+  const reader = stream.getReader();
+  
+  let position = downloadedBytes;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    await writable.write({ type: 'write', position, data: value });
+    position += value.length;
+    options?.onProgress?.(position, totalBytes); // Real-time UI updates
+  }
   await writable.close();
   
   // 4. Verify SHA-256 if provided
@@ -359,10 +368,11 @@ await provider.clearPiperModelCache();  // Purges all cached models
 
 The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manages concurrent model downloads with:
 
+- **Hugging Face Xet Protocol** — Accelerates downloads natively using chunked parallel re-assembly.
 - **Deduplication** — Same model requested twice returns same promise
 - **Prioritization** — Selected model gets bandwidth priority
 - **Cancellation** — Abort downloads and purge partial OPFS files
-- **Observability** — Real-time state snapshot for UI progress indicators
+- **Observability** — Real-time streaming byte-progress via `ReadableStream` pipeline tracking.
 
 **State Machine:**
 
@@ -805,17 +815,12 @@ if (file.size > 0) {
 
 **Effect:** Subsequent sessions load models in ~50ms (OPFS read) vs ~5s (network download).
 
-### Resumable Downloads
+### Low-Memory Streaming & Resumable Downloads
 
-If a download is interrupted (network loss, cancellation), the next attempt resumes from the last byte:
+If a standard fetch download is interrupted (network loss, cancellation), the next attempt resumes from the last byte using `Range` HTTP headers.
+For Hugging Face models, the `XetBlob` stream naturally reconstructs the file using localized deduplicated chunk fetching.
 
-```typescript
-if (downloadedBytes > 0) {
-  headers['Range'] = `bytes=${downloadedBytes}-`;
-}
-```
-
-**Effect:** Large model downloads (30MB+) can survive network interruptions without restarting from zero.
+To prevent Out-of-Memory (OOM) crashes on low-end devices, the library avoids buffering large 30MB+ `.onnx` models into RAM. Instead, it reads straight from the `ReadableStream` of the fetch/Xet response into a `FileSystemWritableFileStream` directly on OPFS.
 
 ---
 

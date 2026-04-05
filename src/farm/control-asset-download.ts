@@ -32,13 +32,19 @@ export function createAssetDownloadController(): DownloadController {
     state.state = 'downloading';
 
     try {
+      const onProgress = (downloaded: number, total: number) => {
+        state.bytesDownloaded = downloaded;
+        state.bytesTotal = total;
+        state.progress = total > 0 ? downloaded / total : 0;
+      };
+
       // Download both files. Config first (small), then model (large).
       await resolveOpfsAsset(
         urls.config,
         modelId,
         "onnx.json",
         expectedSha256?.config,
-        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected }
+        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected, onProgress }
       );
 
       // Check abort between downloads
@@ -49,7 +55,7 @@ export function createAssetDownloadController(): DownloadController {
         modelId,
         "onnx",
         expectedSha256?.onnx,
-        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected }
+        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected, onProgress }
       );
 
       if (!controller.signal.aborted) {
