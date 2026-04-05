@@ -143,7 +143,7 @@ Main Thread                    Worker Pool
 | Component | File | Purpose |
 |-----------|------|---------|
 | `create-piper-provider()` | Provider | High-level API with download management |
-| `piper-timing-farm/worker` | `handleSynthesize()` | Direct worker logic (Advanced) |
+| `piper-timing-farm/worker` | `processPiperSynthesis()` | Direct worker logic (Advanced) |
 | [`createPiperWorkerFarm`](src/farm/create-piper-worker-farm.ts) | Farm | Queue management and worker distribution |
 | [`process-piper-synthesis.worker`](src/worker/process-piper-synthesis.worker.ts) | Worker | ONNX inference and phonemization |
 | [`createAssetDownloadController`](src/farm/control-asset-download.ts) | Downloader | Model asset download orchestration |
@@ -168,7 +168,7 @@ Assets are served from your project's static directory (provisioned via `npx pip
 
 ### Tier 2: CDN Assets
 
-All assets load from jsDelivr:
+All assets are resolved from **jsDelivr CDN**.
 
 ```typescript
 // Piper phonemizer
@@ -230,7 +230,6 @@ function processQueue() {
         text: nextRequest.text,
         requestId: nextRequest.requestId,
         speed: nextRequest.speed,
-        pitch: nextRequest.pitch,
         volume: nextRequest.volume,
         speakerId: nextRequest.speakerId
       });
@@ -348,7 +347,7 @@ export async function resolveOpfsAsset(
 
 **Cache Clearing:** [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts)
 
-*Note: The high-level provider automatically calls `resolveCacheClearing()` first, then terminates the internal farm, ensuring no OPFS locks remain during the wipe.*
+*Note: The high-level provider automatically terminates the internal farm first, then calls `resolveCacheClearing()`, ensuring no OPFS locks remain during the wipe.*
 
 ```typescript
 await provider.clearPiperModelCache();  // Purges all cached models
@@ -515,12 +514,12 @@ For power users building custom orchestration, the core synthesis worker logic i
 
 ```typescript
 // Define your own worker or use the built-in one
-import { handleSynthesize } from 'piper-timing-farm/worker';
+import { processPiperSynthesis } from 'piper-timing-farm/worker';
 
 self.onmessage = async (e) => {
   const { type, text, requestId, speed, volume, speakerId } = e.data;
   if (type === 'synthesize') {
-    await handleSynthesize(text, requestId, { speed, volume, speakerId });
+    await processPiperSynthesis(text, requestId, { speed, volume, speakerId });
   }
 };
 ```

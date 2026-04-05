@@ -40,13 +40,13 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
   try {
     switch (msg.type) {
       case "init":
-        await handleInit(msg.config);
+        await setupPiperWorker(msg.config);
         break;
       case "load-callback":
         await handleLoadCallback(msg.modulePath, msg.functionName);
         break;
       case "synthesize":
-        await handleSynthesize(msg.text, msg.requestId, {
+        await processPiperSynthesis(msg.text, msg.requestId, {
           speed: msg.speed,
           volume: msg.volume,
           speakerId: msg.speakerId
@@ -66,7 +66,7 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
 };
 
 // --- Initialization ---
-async function handleInit(config: PiperWorkerConfig) {
+export async function setupPiperWorker(config: PiperWorkerConfig) {
   const { voiceId, modelId, onnxRuntimePaths, piperPaths, instanceId: id, callbackModule } = config;
   instanceId = id || 0;
   currentModelId = modelId;
@@ -138,7 +138,7 @@ async function handleLoadCallback(modulePath: string, functionName: string) {
   }
 }
 
-async function handleSynthesize(
+export async function processPiperSynthesis(
   text: string, 
   requestId: string, 
   options: { speed?: number; volume?: number; speakerId?: number }

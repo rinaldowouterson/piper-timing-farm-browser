@@ -1,4 +1,4 @@
-import type { AudioSynthesisResult } from "../types";
+export { setupPiperWorker, processPiperSynthesis } from "./process-piper-synthesis.worker";
 
 /**
  * Helper to collect all Transferable objects from a result.
