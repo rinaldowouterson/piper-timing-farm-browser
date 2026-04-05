@@ -6,8 +6,8 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: [path.resolve(__dirname, './setup.ts')],
-    // Search relative to the project root
-    include: ['src/**/*.test.ts', '.test/**/*.test.ts'],
+    // All tests are centralized in .test folder
+    include: ['.test/**/*.test.ts'],
     root: path.resolve(__dirname, '..'),
     testTimeout: 30000
   },
