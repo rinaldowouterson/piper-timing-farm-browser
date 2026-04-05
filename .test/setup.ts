@@ -69,6 +69,16 @@ class MockWorker {
         if (this.listeners[type]) this.listeners[type].delete(listener);
     }
 
+    dispatchEvent(event: Event): boolean {
+        if (event.type === 'error' && this.onerror) {
+            this.onerror(event);
+        }
+        if (this.listeners[event.type]) {
+            this.listeners[event.type].forEach(l => l(event));
+        }
+        return true;
+    }
+
     // Callback module state (for testing worker-thread callbacks)
     private callbackLoaded = false;
 
