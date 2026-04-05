@@ -34,8 +34,8 @@
     "postbuild": "chmod +x dist/cli.js",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "test": "vitest run --config .test/vitest.config.ts",
-    "test:vitals": "vitest run .test/vitals.test.ts --config .test/vitest.config.ts"
+    "test": "vitest run",
+    "test:vitals": "vitest run .test/vitals.test.ts"
   },
   "dependencies": {
     "@diffusionstudio/piper-wasm": "^1.0.0",
