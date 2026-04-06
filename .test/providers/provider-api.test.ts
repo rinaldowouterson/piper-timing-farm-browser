@@ -89,7 +89,7 @@ describe('Provider API', () => {
             spy.mockRestore();
         });
 
-        it('should work even when not initialized', async () => {
+        it('should handle operations safely before explicit initialization', async () => {
             const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
             
             // Clear without init should not throw

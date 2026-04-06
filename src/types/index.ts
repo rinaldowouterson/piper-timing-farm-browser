@@ -121,6 +121,8 @@ export interface FarmConfig {
   /** SHA-256 hashes for model integrity verification. */
   modelSha256?: string;
   configSha256?: string;
+  /** Optional progress callback fired during model download. Receives a snapshot of the download state. */
+  onProgress?: (state: DownloadState) => void;
 }
 
 export interface SynthesizeOptions {
@@ -202,7 +204,7 @@ export interface DownloadController {
     modelId: string,
     urls: { onnx: string; config: string }, 
     expectedSha256?: { onnx?: string; config?: string },
-    options?: { prioritizeSelected?: boolean }
+    options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void }
   ): Promise<void>;
   /** Pause all other downloads and prioritize the given model. */
   prioritize(modelId: string): void;

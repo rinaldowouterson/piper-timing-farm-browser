@@ -161,4 +161,50 @@ describe('Worker Pool Edge Cases', () => {
         spy.mockRestore();
         pool.terminate();
     });
+
+    it('should abort pending transitions when rapid reinit is called (Atomic Supersession)', async () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        
+        const onReady = vi.fn();
+        const onResult = vi.fn();
+        const pool = createWorkerPool(onReady, onResult);
+        await pool.init(baseConfig, 2);
+        
+        expect(pool.getActiveModelId()).toBe('en_US-bryce-medium');
+
+        // Fire 5 rapid reinit() calls — only the last should succeed
+        const models = [
+            'en_US-amy-medium',
+            'uk_UA-ukrainian_tts-medium',
+            'de_DE-thorsten-medium',
+            'fr_FR-siwis-medium',
+            'es_ES-davefx-medium'
+        ];
+
+        const results = await Promise.allSettled(
+            models.map(modelId => pool.reinit({ modelId, voiceId: modelId }))
+        );
+
+        // First 4 should be rejected with AbortError (superseded)
+        for (let i = 0; i < 4; i++) {
+            expect(results[i].status).toBe('rejected');
+            if (results[i].status === 'rejected') {
+                const reason = (results[i] as PromiseRejectedResult).reason;
+                expect(reason).toBeInstanceOf(DOMException);
+                expect(reason.name).toBe('AbortError');
+            }
+        }
+
+        // Last should succeed
+        expect(results[4].status).toBe('fulfilled');
+
+        // Only the final model should be active
+        expect(pool.getActiveModelId()).toBe('es_ES-davefx-medium');
+
+        // Worker count should be exactly the original count (no orphaned workers)
+        expect(pool.getWorkerCount()).toBe(2);
+        
+        spy.mockRestore();
+        pool.terminate();
+    });
 });

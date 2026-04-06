@@ -20,6 +20,7 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
   let targetModelId: string | null = null;
   let targetSpeakerId: number = 0;
   let currentConfig: PiperWorkerConfig | null = null;
+  let pendingTransition: { abort: () => void; shadowPool: WorkerState[] } | null = null;
 
   return {
     async init(config: PiperWorkerConfig, count: number) {
@@ -51,21 +52,40 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
     },
 
     /**
-     * Re-initializes the pool using a Shadow Pool pattern.
-     * New workers are spawned and warmed up in the background.
-     * Once ready, they replace the current workers.
+     * Re-initializes the pool using a Shadow Pool pattern with Atomic Supersession.
+     *
+     * If a previous transition is still in-flight (shadow pool initializing),
+     * it is immediately aborted and its workers terminated to prevent
+     * WebAssembly memory exhaustion during rapid model switching.
+     *
+     * @throws {DOMException} AbortError if this transition is superseded by a newer one.
      */
     async reinit(config: Partial<PiperWorkerConfig>) {
       if (!currentConfig) throw new Error("Pool not initialized");
-      
+
+      // 1. Abort any pending transition (supersede intermediate pools)
+      if (pendingTransition) {
+        pendingTransition.abort();
+        pendingTransition.shadowPool.forEach(w => w.worker.terminate());
+        pendingTransition = null;
+      }
+
       const newConfig = { ...currentConfig, ...config } as PiperWorkerConfig;
       targetModelId = newConfig.modelId;
       const count = workers.length;
       const shadowPool: WorkerState[] = [];
-      
-      // 1. Spawn Shadow Pool
+      const abortController = new AbortController();
+
+      // 2. Register this transition so future reinit() calls can abort it
+      pendingTransition = {
+        abort: () => abortController.abort(),
+        shadowPool
+      };
+
+      // 3. Spawn Shadow Pool
       const initPromises = [];
       for (let i = 0; i < count; i++) {
+        if (abortController.signal.aborted) break;
         const id = nextWorkerId++;
         const worker = createWorker(id, newConfig, (msg) => {
           if (msg.type === 'ready') onReady(msg.instanceId);
@@ -83,21 +103,27 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
         }));
       }
 
-      // 2. Wait for Shadow Pool to be READY
+      // 4. Wait for Shadow Pool to be READY
       await Promise.all(initPromises);
 
-      // 3. Promote Shadow Pool & Retire Old Workers
+      // 5. Check if this transition was superseded by a newer reinit() call
+      if (abortController.signal.aborted) {
+        shadowPool.forEach(w => w.worker.terminate());
+        throw new DOMException("Transition superseded by newer request", "AbortError");
+      }
+
+      // 6. Promote Shadow Pool & Retire Old Workers
+      pendingTransition = null;
       const oldWorkers = [...workers];
       workers = shadowPool;
       activeModelId = newConfig.modelId;
       currentConfig = newConfig;
 
-      // 4. Graceful Retirement: Old workers finish current task then die
+      // 7. Graceful Retirement: Old workers finish current task then die
       oldWorkers.forEach(w => {
         if (!w.busy) {
           w.worker.terminate();
         } else {
-          // Worker is busy, wait for its last result then kill it
           const cleanupHandler = (e: MessageEvent) => {
             if (e.data.type === 'success' || e.data.type === 'error') {
               w.worker.removeEventListener('message', cleanupHandler);
@@ -114,6 +140,12 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
     },
 
     terminate() {
+      // Abort any in-flight transition before total shutdown
+      if (pendingTransition) {
+        pendingTransition.abort();
+        pendingTransition.shadowPool.forEach(w => w.worker.terminate());
+        pendingTransition = null;
+      }
       workers.forEach(w => w.worker.terminate());
       workers.length = 0;
       isInitialized = false;

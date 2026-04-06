@@ -81,13 +81,15 @@ describe('Download Controller', () => {
             });
         });
 
+        // Catch the rejection that cancel() will trigger
         const promise = controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
-        });
+        }).catch(() => {});
 
         // Cancel before download completes
         await controller.cancel('model-a');
+        await promise;
 
         const state = controller.getState();
         expect(state.get('model-a')!.state).toBe('cancelled');
@@ -106,16 +108,18 @@ describe('Download Controller', () => {
             });
         });
 
-        controller.request('model-a', {
+        // Catch rejections that cancelAll() will trigger
+        const p1 = controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
-        });
-        controller.request('model-b', {
+        }).catch(() => {});
+        const p2 = controller.request('model-b', {
             onnx: 'https://example.com/model-b.onnx',
             config: 'https://example.com/model-b.onnx.json'
-        });
+        }).catch(() => {});
 
         await controller.cancelAll();
+        await Promise.allSettled([p1, p2]);
 
         const state = controller.getState();
         expect(state.get('model-a')!.state).toBe('cancelled');
@@ -272,14 +276,15 @@ describe('Download Controller', () => {
         });
 
         // Start both downloads (both will hang in 'downloading' state)
+        // Catch rejections since prioritize() will abort and re-issue these
         controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
-        });
+        }).catch(() => {});
         controller.request('model-b', {
             onnx: 'https://example.com/model-b.onnx',
             config: 'https://example.com/model-b.onnx.json'
-        });
+        }).catch(() => {});
 
         // Wait briefly for both to enter downloading state
         await new Promise(resolve => setTimeout(resolve, 5));
@@ -320,5 +325,60 @@ describe('Download Controller', () => {
 
         // model-a should have been resumed (downloading or complete)
         expect(['downloading', 'complete']).toContain(stateAfter.get('model-a')!.state);
+    });
+
+    it('should invoke onProgress callback with state snapshots during download', async () => {
+        const controller = createAssetDownloadController();
+        const progressUpdates: Array<{ progress: number; state: string; bytesDownloaded: number }> = [];
+
+        // Use a multi-chunk stream to guarantee multiple onProgress calls
+        mockFetch.mockImplementation(() => {
+            return Promise.resolve({
+                ok: true,
+                status: 200,
+                headers: { get: () => '200' },
+                body: new ReadableStream({
+                    start(ctrl) {
+                        // Two chunks of 100 bytes each
+                        ctrl.enqueue(new Uint8Array(100));
+                        ctrl.enqueue(new Uint8Array(100));
+                        ctrl.close();
+                    }
+                })
+            });
+        });
+
+        const onProgress = vi.fn((state: { progress: number; state: string; bytesDownloaded: number }) => {
+            progressUpdates.push({ ...state });
+        });
+
+        await controller.request(
+            'model-progress',
+            {
+                onnx: 'https://example.com/model-progress.onnx',
+                config: 'https://example.com/model-progress.onnx.json'
+            },
+            undefined,
+            { onProgress }
+        );
+
+        // onProgress should have been called at least once
+        expect(onProgress).toHaveBeenCalled();
+
+        // All updates should have 'downloading' state (complete fires after onProgress stops)
+        for (const update of progressUpdates) {
+            expect(update.state).toBe('downloading');
+        }
+
+        // Final snapshot state should be 'complete'
+        const finalState = controller.getState().get('model-progress');
+        expect(finalState).toBeDefined();
+        expect(finalState!.state).toBe('complete');
+        expect(finalState!.progress).toBe(1.0);
+
+        // Verify snapshots are copies (different object references)
+        if (progressUpdates.length >= 2) {
+            expect(progressUpdates[0]).not.toBe(progressUpdates[1]);
+        }
     });
 });

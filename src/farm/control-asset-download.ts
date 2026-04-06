@@ -3,31 +3,26 @@ import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
 
 /**
  * Stateful Download Controller for model assets.
- *
- * Manages the lifecycle of model downloads with:
- * - Deduplication: same modelId returns existing promise
- * - Prioritization: pause others, fast-track the selected model
- * - Cancellation: abort + purge OPFS partial files
- * - Observability: getState() returns full snapshot per model
  */
 export function createAssetDownloadController(): DownloadController {
   const downloads = new Map<string, {
     state: DownloadState;
     controller: AbortController;
     promise: Promise<void>;
+    resolve: () => void;
+    reject: (e: any) => void;
     urls: { onnx: string; config: string };
     expectedSha256?: { onnx?: string; config?: string };
-    options?: { prioritizeSelected?: boolean };
+    options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void };
   }>();
 
-  /** Internal: execute a single model download (both .onnx and .onnx.json). */
   async function executeDownload(
     modelId: string,
     urls: { onnx: string; config: string },
     controller: AbortController,
     state: DownloadState,
     expectedSha256?: { onnx?: string; config?: string },
-    options?: { prioritizeSelected?: boolean }
+    options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void }
   ): Promise<void> {
     state.state = 'downloading';
 
@@ -36,9 +31,9 @@ export function createAssetDownloadController(): DownloadController {
         state.bytesDownloaded = downloaded;
         state.bytesTotal = total;
         state.progress = total > 0 ? downloaded / total : 0;
+        options?.onProgress?.({ ...state });
       };
 
-      // Download both files. Config first (small), then model (large).
       await resolveOpfsAsset(
         urls.config,
         modelId,
@@ -47,7 +42,6 @@ export function createAssetDownloadController(): DownloadController {
         { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected, onProgress }
       );
 
-      // Check abort between downloads
       if (controller.signal.aborted) return;
 
       await resolveOpfsAsset(
@@ -61,19 +55,20 @@ export function createAssetDownloadController(): DownloadController {
       if (!controller.signal.aborted) {
         state.state = 'complete';
         state.progress = 1.0;
+        const entry = downloads.get(modelId);
+        if (entry) entry.resolve();
       }
     } catch (err) {
       if (controller.signal.aborted) {
-        // State already set by cancel() or prioritize()
         return;
       }
       state.state = 'error';
       state.error = err instanceof Error ? err.message : String(err);
-      throw err;
+      const entry = downloads.get(modelId);
+      if (entry) entry.reject(err);
     }
   }
 
-  /** Internal: purge OPFS files for a model. */
   async function purgeOpfs(modelId: string): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
@@ -82,34 +77,26 @@ export function createAssetDownloadController(): DownloadController {
       for (const ext of ["onnx", "onnx.json"]) {
         try {
           await voicesDir.removeEntry(`${modelId}.${ext}`);
-        } catch {
-          // NotFoundError or similar — idempotent
-        }
+        } catch {}
       }
-    } catch {
-      // voices dir doesn't exist — nothing to clean
-    }
+    } catch {}
   }
 
-  /** Internal: resume any paused downloads in LIFO order. */
   function resumePaused(): void {
     const paused = [...downloads.entries()]
       .filter(([, d]) => d.state.state === 'paused')
-      .reverse(); // LIFO: most recently requested first
+      .reverse();
 
     for (const [modelId, entry] of paused) {
-      const newController = new AbortController();
-      entry.controller = newController;
-      entry.promise = executeDownload(
+      entry.controller = new AbortController();
+      executeDownload(
         modelId,
         entry.urls,
-        newController,
+        entry.controller,
         entry.state,
         entry.expectedSha256,
         entry.options
-      ).catch(() => {
-        // Error state already set inside executeDownload
-      });
+      );
     }
   }
 
@@ -118,7 +105,7 @@ export function createAssetDownloadController(): DownloadController {
       modelId: string, 
       urls: { onnx: string; config: string }, 
       expectedSha256?: { onnx?: string; config?: string },
-      options?: { prioritizeSelected?: boolean }
+      options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void }
     ): Promise<void> {
       const existing = downloads.get(modelId);
       if (existing && existing.state.state !== 'cancelled' && existing.state.state !== 'error') {
@@ -126,22 +113,27 @@ export function createAssetDownloadController(): DownloadController {
       }
       
       const state: DownloadState = {
-        modelId,
-        state: 'queued',
-        bytesDownloaded: 0,
-        bytesTotal: 0,
-        progress: 0
+        modelId, state: 'queued', bytesDownloaded: 0, bytesTotal: 0, progress: 0
       };
 
+      let resolveFunc!: () => void;
+      let rejectFunc!: (e: any) => void;
+      const promise = new Promise<void>((resolve, reject) => {
+        resolveFunc = resolve;
+        rejectFunc = reject;
+      });
+
       const controller = new AbortController();
-      const promise = executeDownload(modelId, urls, controller, state, expectedSha256, options);
-      
-      downloads.set(modelId, { state, controller, promise, urls, expectedSha256, options });
+      downloads.set(modelId, { 
+        state, controller, promise, resolve: resolveFunc, reject: rejectFunc, 
+        urls, expectedSha256, options 
+      });
+
+      executeDownload(modelId, urls, controller, state, expectedSha256, options);
       return promise;
     },
 
     prioritize(modelId) {
-      // Pause all other active downloads
       for (const [id, entry] of downloads) {
         if (id !== modelId && entry.state.state === 'downloading') {
           entry.controller.abort();
@@ -149,22 +141,15 @@ export function createAssetDownloadController(): DownloadController {
         }
       }
 
-      // Start or resume the prioritized one
       const entry = downloads.get(modelId);
       if (entry && (entry.state.state === 'paused' || entry.state.state === 'queued')) {
-        const newController = new AbortController();
-        entry.controller = newController;
-        entry.promise = executeDownload(
-          modelId,
-          entry.urls,
-          newController,
-          entry.state,
-          entry.expectedSha256
+        entry.controller = new AbortController();
+        executeDownload(
+          modelId, entry.urls, entry.controller, entry.state, entry.expectedSha256, entry.options
         ).then(() => {
-          // After prioritized completes, resume paused downloads
-          resumePaused();
-        }).catch(() => {
-          // Error state already set
+          if (entry.state.state === 'complete') {
+            resumePaused();
+          }
         });
       }
     },
@@ -174,9 +159,9 @@ export function createAssetDownloadController(): DownloadController {
       if (!entry) return;
 
       entry.controller.abort();
+      const wasActive = entry.state.state === 'downloading' || entry.state.state === 'paused' || entry.state.state === 'queued';
       entry.state.state = 'cancelled';
-
-      // Purge OPFS partial files
+      if (wasActive) entry.reject(new Error("Cancelled"));
       await purgeOpfs(modelId);
     },
 
@@ -187,6 +172,7 @@ export function createAssetDownloadController(): DownloadController {
         if (entry.state.state === 'downloading' || entry.state.state === 'paused' || entry.state.state === 'queued') {
           entry.controller.abort();
           entry.state.state = 'cancelled';
+          entry.reject(new Error("Cancelled"));
           cancelPromises.push(purgeOpfs(modelId));
         }
       }

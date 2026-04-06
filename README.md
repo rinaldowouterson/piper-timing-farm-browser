@@ -1,6 +1,6 @@
 # Piper Timing Farm
 
-High-performance, multi-threaded Piper TTS engine for the browser. Features framework-agnostic worker orchestration, Parallel FIFO sequencing, and **stress-test-proof** background model switching.
+High-performance, multi-threaded Piper TTS engine for the browser. Features framework-agnostic worker orchestration, Parallel FIFO sequencing, **Atomic Supersession** for bounded-memory model switching, and push/pull download progress observability.
 
 [![Release](https://img.shields.io/npm/v/piper-timing-farm)](https://www.npmjs.com/package/piper-timing-farm)
 [![License](https://img.shields.io/npm/l/piper-timing-farm)](https://github.com/rinaldo/piper-timing-farm/blob/main/LICENSE)
@@ -16,7 +16,7 @@ High-performance, multi-threaded Piper TTS engine for the browser. Features fram
 - [Entry Points](#entry-points)
 - [Core Features](#core-features)
   - [Parallel FIFO Sequencer](#parallel-fifo-sequencer)
-  - [Shadow Pool Model Transitions](#shadow-pool-model-transitions)
+  - [Model Switching Lifecycle](#model-switching-lifecycle)
   - [OPFS Read-Through Cache](#opfs-read-through-cache)
   - [Download Controller](#download-controller)
   - [Speaker ID Support](#speaker-id-support)
@@ -37,7 +37,7 @@ High-performance, multi-threaded Piper TTS engine for the browser. Features fram
 1. **Millisecond-perfect synchronization** — Exposed VITS model durations enable precise lipsync and caption timing
 2. **Zero main-thread blocking** — All synthesis runs in dedicated Web Workers
 3. **Deterministic output order** — Parallel FIFO ensures results arrive in request order
-4. **Hot-swap model switching** — Change voices without interrupting active synthesis
+4. **Robust model switching** — Atomic Supersession guarantees bounded memory even under rapid model hot-swapping
 
 ### What Makes This Different
 
@@ -88,7 +88,10 @@ const model = PIPER_MODELS.find(m => m.id === 'en_US-bryce-medium');
 await provider.init({
   modelId: model.id,
   voiceId: model.id,
-  cpuInstances: 2  // Number of parallel workers
+  cpuInstances: 2,  // Number of parallel workers
+  onProgress: (state) => {
+    console.log(`Downloading: ${(state.progress * 100).toFixed(1)}%`);
+  }
 });
 
 // Synthesize text
@@ -240,62 +243,61 @@ function processQueue() {
 
 ---
 
-### Shadow Pool Model Transitions
+### Model Switching Lifecycle
 
-When switching models during active synthesis, the library uses a **Shadow Pool** pattern to achieve gapless transitions:
+Switching models involves two strictly sequential phases. **Phase 1 must fully complete before Phase 2 begins** — the library never allocates WebAssembly memory until model files are 100% present in OPFS.
 
-1. **Pre-spawn workers** for the new model in the background
-2. **Parallel warm-up** while current workers finish their tasks
-3. **Atomic handoff** once shadow pool is ready
+#### Phase 1: Download Prioritization
 
-**Timeline Example:**
+When `provider.init({ modelId: 'model-c' })` is called:
+
+1. **Prioritize** — All other in-flight downloads are paused. Full bandwidth is reserved for `model-c`.
+2. **Download** — The `.onnx` model and `.onnx.json` config are fetched (or resumed from partial OPFS state) with real-time progress tracking.
+3. **Verify** — If SHA-256 hashes were provided, integrity is verified during the caching phase.
+4. **Cache** — Files are streamed directly to OPFS. Zero RAM buffering, even for 30MB+ models.
+
+Once `model-c` completes, all previously paused downloads **automatically resume** in LIFO order (most recently requested first).
+
+**Concrete Example:**
 
 ```
-[T0] Model A active, 2 workers processing queue
-[T1] User requests Model B
-     → Shadow pool spawned (2 new workers)
-     → Shadow workers initialize in background
-[T2] Model A workers complete current tasks
-     → Model A workers terminated
-     → Shadow pool promoted to active
-[T3] Queue continues with Model B (zero gap)
+User clicks: Model A → Model B → Model C (in rapid succession)
+
+[T0] Model A starts downloading
+[T1] Model B requested → Model A paused, Model B starts downloading
+[T2] Model C requested → Model B paused, Model C starts downloading
+[T3] Model C completes → Phase 2 begins for Model C
+[T4] Model B resumes downloading in background (LIFO: B before A)
+[T5] Model B completes → Model A resumes downloading
+[T6] Model A completes → all models cached in OPFS for instant future loads
 ```
 
-**Implementation:** See `reinit(config)` in [`control-worker-pool.ts`](src/farm/control-worker-pool.ts).
+> [!IMPORTANT]
+> **Download ≠ Pool creation.** No WebAssembly workers are spawned during Phase 1. The download controller is purely concerned with network I/O and OPFS caching. Phase 2 only begins after the download promise resolves.
 
-```typescript
-async reinit(config: Partial<PiperWorkerConfig>) {
-  // 1. Spawn Shadow Pool
-  // ... Loop spawning workers and storing initPromises ...
-  
-  // 2. Wait for Shadow Pool to be READY
-  await Promise.all(initPromises);
-  
-  // 3. Promote Shadow Pool & Retire Old Workers
-  const oldWorkers = [...workers];
-  workers = shadowPool;
-  activeModelId = newConfig.modelId;
-  currentConfig = newConfig;
-  
-  // 4. Graceful Retirement: Old workers finish current task then die
-  oldWorkers.forEach(w => {
-    if (!w.busy) {
-      w.worker.terminate();
-    } else {
-      // Worker is busy, wait for its last result then kill it
-      const cleanupHandler = (e: MessageEvent) => {
-        if (e.data.type === 'success' || e.data.type === 'error') {
-          w.worker.removeEventListener('message', cleanupHandler);
-          w.worker.terminate();
-        }
-      };
-      w.worker.addEventListener('message', cleanupHandler);
-    }
-  });
-}
+#### Phase 2: Shadow Pool Transition (with Atomic Supersession)
+
+Only after the model files are fully cached does the library create a **Shadow Pool** — a set of new Web Workers that load the downloaded model into WebAssembly memory:
+
+1. **Stale Check** — Before touching the worker pool, the provider verifies this is still the *most recent* `init()` request. If a newer request arrived during the download, this transition is silently abandoned.
+2. **Supersede** — If a previous Shadow Pool is still initializing (from an earlier `init()` that completed its download first), it is immediately aborted and its workers terminated.
+3. **Spawn** — New workers are created and begin loading the ONNX model from OPFS into WebAssembly.
+4. **Promote** — Once all shadow workers report `ready`, the shadow pool replaces the active pool atomically.
+5. **Retire** — Old workers finish their current synthesis task, then terminate.
+
+```
+[T3] Model C download complete (Phase 1 done)
+     → Stale check passes (Model C is still the latest request)
+     → Shadow Pool C spawned (2 workers loading WASM)
+[T3.5] Model C workers report ready
+     → Shadow Pool C promoted to Active Pool
+     → Old Model A workers retired gracefully
+[T4] Queue continues with Model C
 ```
 
-**Adaptive Handoff:** Unstarted queue items automatically adopt the new model once the shadow pool is ready. See `processQueue()` in [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts).
+**Memory Guarantee:** At most `1 Active Pool + 1 Shadow Pool` can exist at any time. If multiple initialization requests are triggered in rapid succession during Phase 2, Atomic Supersession ensures intermediate shadow pools are terminated before the newest one is created.
+
+**Implementation:** See `reinit()` in [`control-worker-pool.ts`](src/farm/control-worker-pool.ts) for the supersession mechanism, and `init()` in [`create-piper-provider.ts`](src/providers/create-piper-provider.ts) for the stale-check and download-first gate.
 
 ---
 
@@ -368,51 +370,59 @@ await provider.clearPiperModelCache();  // Purges all cached models
 
 The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manages concurrent model downloads with:
 
-- **Hugging Face Xet Protocol** — Accelerates downloads natively using chunked parallel re-assembly.
+- **Hugging Face Xet Protocol** — Accelerates downloads natively using chunked parallel re-assembly
 - **Deduplication** — Same model requested twice returns same promise
-- **Prioritization** — Selected model gets bandwidth priority
-- **Cancellation** — Abort downloads and purge partial OPFS files
-- **Observability** — Real-time streaming byte-progress via `ReadableStream` pipeline tracking.
+- **Automatic Prioritization** — The currently selected model gets full bandwidth; all others are paused
+- **LIFO Resume** — Paused downloads resume automatically (most recently requested first) after the priority download completes
+- **Per-Model Cancellation** — Abort and purge partial OPFS files for a specific model
+- **Progress Observability** — Push (callback) and Pull (snapshot) mechanisms for real-time progress
 
-**State Machine:**
+**Download State Machine:**
 
 ```
 queued → downloading → complete
           ↓
-        paused → downloading (resumed)
+        paused → downloading (resumed automatically via LIFO)
           ↓
         cancelled (OPFS purged)
           ↓
         error
 ```
 
-**API:**
+**Snapshot Polling (Pull):**
 
 ```typescript
-const downloader = createAssetDownloadController();
-
-// Request a model download
-await downloader.request(modelId, { onnx, config }, { onnx: 'sha256hash...' });
-
-// Prioritize the currently selected model (pauses others)
-downloader.prioritize(modelId);
-
-// Cancel and cleanup
-await downloader.cancel(modelId);
-
-// Get state snapshot for UI
-const state = downloader.getState();
+// Observe ALL downloads at once — ideal for a "Downloads Dashboard" UI
+const state = provider.getDownloadState();
 // Map<string, DownloadState> where DownloadState = {
-//   modelId, state, bytesDownloaded, bytesTotal, progress, error
+//   modelId, state, bytesDownloaded, bytesTotal, progress (0.0–1.0), error?
 // }
 ```
 
-**Integration:** The [`createPiperProvider`](src/providers/create-piper-provider.ts) exposes download state:
+**Progress Callback (Push):**
 
 ```typescript
-const provider = createPiperProvider();
-const downloadState = provider.getDownloadState();
+// Real-time updates for the active download — ideal for a single loading bar
+await provider.init({
+  modelId: 'en_US-bryce-medium',
+  voiceId: 'en_US-bryce-medium',
+  onProgress: (state) => {
+    console.log(`${state.modelId}: ${(state.progress * 100).toFixed(1)}%`);
+  }
+});
+```
+
+> [!TIP]
+> Both mechanisms coexist — `onProgress` is push-based sugar for the common single-model case; `getDownloadState()` is the power-user tool for observing everything. They read from the same source of truth.
+
+**Per-Model Cancellation:**
+
+```typescript
+// Cancel a specific model and purge its partial OPFS files
 await provider.cancelDownload('en_US-libritts-high');
+
+// Cancel ALL active downloads and shut down the farm
+provider.terminate();
 ```
 
 ---
@@ -598,6 +608,7 @@ interface FarmConfig {
   callbackModule?: CallbackModuleConfig;
   modelSha256?: string;       // Optional: SHA-256 for model integrity
   configSha256?: string;      // Optional: SHA-256 for config integrity
+  onProgress?: (state: DownloadState) => void;  // Optional: Download progress callback
 }
 ```
 

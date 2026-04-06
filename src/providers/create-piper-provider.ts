@@ -31,10 +31,12 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   let farm: PiperWorkerFarm | null = null;
   let activeModelId: string | null = null;
   let loadingModelId: string | null = null;
+  let lastTransitionId = 0;
   const downloader = createAssetDownloadController();
 
   return {
     async init(config: FarmConfig) {
+      const transitionId = ++lastTransitionId;
       const { modelId, modelUrls } = config;
       
       // If already initialized and requesting same model, skip
@@ -59,15 +61,26 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       downloader.prioritize(modelId);
 
       // 1. Download & Verify via the download controller
-      await downloader.request(
-        modelId, 
-        { onnx: onnxUrl, config: jsonUrl },
-        { 
-          onnx: config.modelSha256 || modelEntry?.modelSha256, 
-          config: config.configSha256 || modelEntry?.configSha256 
-        },
-        { prioritizeSelected: config.prioritizeSelected ?? true }
-      );
+      try {
+        await downloader.request(
+          modelId, 
+          { onnx: onnxUrl, config: jsonUrl },
+          { 
+            onnx: config.modelSha256 || modelEntry?.modelSha256, 
+            config: config.configSha256 || modelEntry?.configSha256 
+          },
+          { prioritizeSelected: config.prioritizeSelected ?? true, onProgress: config.onProgress }
+        );
+      } catch (err) {
+        // Download failed or was cancelled — clean up loading state
+        if (transitionId === lastTransitionId) {
+          loadingModelId = null;
+        }
+        throw err;
+      }
+
+      // STALE CHECK: A newer init() was called during download — abandon this one
+      if (transitionId !== lastTransitionId) return;
 
       // 2. Initial Setup or Handoff
       if (!farm) {
@@ -78,13 +91,24 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
           piperPaths: config.piperPaths || FULL_ASSET_URLS.piper
         });
       } else {
-      // SHADOW POOL OPTIMIZATION: Non-blocking re-init while queue is running
-      await farm.reinit({ 
-        modelId, 
-        voiceId: config.voiceId,
-        modelUrls: config.modelUrls
-      });
+        try {
+          // SHADOW POOL OPTIMIZATION: Non-blocking re-init while queue is running
+          await farm.reinit({ 
+            modelId, 
+            voiceId: config.voiceId,
+            modelUrls: config.modelUrls
+          });
+        } catch (err) {
+          // Transition was superseded by a newer reinit() — silently return
+          if (err instanceof DOMException && err.name === 'AbortError') {
+            return;
+          }
+          throw err;
+        }
       }
+
+      // Final stale check before committing state
+      if (transitionId !== lastTransitionId) return;
 
       activeModelId = modelId;
       loadingModelId = null;
