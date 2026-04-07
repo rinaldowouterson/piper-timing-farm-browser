@@ -306,9 +306,16 @@ Only after the model files are fully cached does the library create a **Shadow P
 All model and WASM assets are cached in the **Origin Private File System (OPFS)** for persistence across sessions:
 
 1. **Check OPFS + `.meta` marker** — If asset exists with a verified SHA-256 marker, return immediately (zero-latency fast-path)
-2. **Fetch from network** — If missing or marker mismatch, download with Range support (resumes partial downloads)
-3. **Verify SHA-256** — Integrity check performed during download; on success, a `.meta` marker is written for instant future loads
-4. **Write to OPFS** — Stream directly to filesystem (zero RAM buffering, even for 30MB+ models)
+2. **Auto-fetch SHA-256 (HuggingFace)** — If SHA-256 not provided and URL is from HuggingFace, fetch hash from HF API (`lfs.oid` field)
+3. **Fetch from network** — If missing or marker mismatch, download with Range support (resumes partial downloads)
+4. **Verify SHA-256** — Integrity check is **mandatory**; on success, a `.meta` marker is written for instant future loads
+5. **Write to OPFS** — Stream directly to filesystem (zero RAM buffering, even for 30MB+ models)
+
+> [!IMPORTANT]
+> **SHA-256 is mandatory for integrity verification.** This prevents serving partial/corrupted files that cause `ERROR_CODE 7` (protobuf parsing failed).
+> 
+> - **HuggingFace URLs**: SHA-256 is auto-fetched from the HF API — zero configuration required
+> - **Non-HuggingFace URLs**: You must provide `modelSha256` / `configSha256` in `FarmConfig`
 
 **Implementation:** [`resolve-opfs-asset.ts`](src/utils/resolve-opfs-asset.ts)
 
@@ -316,43 +323,49 @@ All model and WASM assets are cached in the **Origin Private File System (OPFS)*
 export async function resolveOpfsAsset(
   url: string,
   modelId: string,
-  // ...
-  expectedSha256?: string,
-  options?: { signal?: AbortSignal; prioritizeSelected?: boolean; onProgress?: (downloaded: number, total: number) => void }
+  extension: string,
+  expectedSha256?: string,  // Auto-fetched for HuggingFace URLs
+  options?: { signal?: AbortSignal; onProgress?: (downloaded: number, total: number) => void }
 ): Promise<ArrayBuffer> {
-  const root = await navigator.storage.getDirectory();
-  const voicesDir = await root.getDirectoryHandle("voices", { create: true });
+  const hfInfo = extractHFRepoPath(url);
+  
+  // SECURITY: Auto-fetch SHA-256 from HuggingFace API if not provided
+  if (!expectedSha256 && hfInfo) {
+    expectedSha256 = await fetchHFSha256(hfInfo.repo, hfInfo.revision, hfInfo.path);
+  }
+  
+  // SHA-256 is mandatory — throw if still not available
+  if (!expectedSha256) {
+    throw new Error(`SHA-256 hash is required for integrity verification`);
+  }
   
   // 1. Try OPFS with .meta marker verification (fast-path)
-  try {
-    const fileHandle = await voicesDir.getFileHandle(filename);
-    const file = await fileHandle.getFile();
-    if (file.size > 0) {
-      // Check .meta marker for verified SHA-256
-      const metaMarker = await readMetaMarker(voicesDir, filename);
-      if (metaMarker === expectedSha256) {
-        return await file.arrayBuffer(); // Instant load, zero hashing
-      }
-      // Marker mismatch → fall through to network fetch (partial/corrupt file)
-    }
-  } catch { /* Not found, proceed to fetch */ }
+  const verifiedHash = await readMetaMarker(voicesDir, filename);
+  if (verifiedHash === expectedSha256) {
+    return await file.arrayBuffer(); // Instant load, zero hashing
+  }
   
   // 2. Fetch using Stream (with Range support for resumption)
-  const stream = await getReadableStream(url, downloadedBytes);
-  
-  // 3. Write to OPFS via Stream (Zero-memory-buffering)
-  const writable = await fileHandle.createWritable({ keepExistingData: true });
-  // ... streaming write loop ...
-  
+  // 3. Write to OPFS via Stream (zero-memory-buffering)
   // 4. Verify SHA-256 and write .meta marker on success
-  if (expectedSha256) {
-    await verifySha256(finalBuffer, expectedSha256, url);
-    await writeMetaMarker(voicesDir, filename, expectedSha256);
-  }
+  await verifySha256(finalBuffer, expectedSha256, url);
+  await writeMetaMarker(voicesDir, filename, expectedSha256);
   
   return finalBuffer;
 }
 ```
+
+**HuggingFace API Auto-Fetch Example:**
+
+```
+URL: https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/male/Bryce/en_US-bryce-medium.onnx
+
+API Call: https://huggingface.co/api/models/rinaldow/piper-onnx-durations/tree/main/english/US/male/Bryce
+
+Response: [{ "path": "...", "lfs": { "oid": "330c232c12b8a08eb241599190f2ee8ccd6072dce323d10e06684fb0cde8a241" } }]
+```
+
+The `lfs.oid` field contains the SHA-256 hash — automatically extracted and used for integrity verification.
 
 **Cache Location:** `navigator.storage.getDirectory().getDirectoryHandle("voices")`
 
@@ -362,6 +375,7 @@ export async function resolveOpfsAsset(
 
 ```typescript
 await provider.clearPiperModelCache();  // Purges all cached models
+await provider.clearAndRedownloadModel('en_US-bryce-medium');  // Force fresh download for corrupted model
 ```
 
 ---
@@ -373,8 +387,9 @@ The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manage
 - **Hugging Face Xet Protocol** — Accelerates downloads natively using chunked parallel re-assembly
 - **Deduplication** — Same model requested twice returns same promise
 - **Automatic Prioritization** — The currently selected model gets full bandwidth; all others are paused
-- **LIFO Resume** — Paused downloads resume automatically (most recently requested first) after the priority download completes
+- **Serial Resume** — Paused downloads resume automatically **one at a time** after the priority download completes (prevents OPFS write-lock contention)
 - **Per-Model Cancellation** — Abort and purge partial OPFS files for a specific model
+- **Force Redownload** — `clearAndRedownloadModel()` purges cache and starts fresh download for corrupted models
 - **Progress Observability** — Push (callback) and Pull (snapshot) mechanisms for real-time progress
 
 **Download State Machine:**
@@ -382,9 +397,9 @@ The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manage
 ```
 queued → downloading → complete
           ↓
-        paused → downloading (resumed automatically via LIFO)
+        paused → downloading (resumed automatically, one at a time)
           ↓
-        cancelled (OPFS purged)
+        cancelled (OPFS purged including .meta markers)
           ↓
         error
 ```
@@ -422,11 +437,15 @@ await provider.init({
 await provider.cancelDownload('en_US-libritts-high');
 
 // Force fresh download for a corrupted model (purge + re-download)
+// This clears the .meta marker, the .onnx file, and the .onnx.json file
 await provider.clearAndRedownloadModel('en_US-bryce-medium');
 
 // Cancel ALL active downloads and shut down the farm
 provider.terminate();
 ```
+
+> [!TIP]
+> **Hosting on HuggingFace is recommended.** The library automatically fetches SHA-256 hashes from the HuggingFace API for integrity verification. This means zero-configuration integrity checks for HF-hosted models. For non-HF URLs, you must provide `modelSha256` and `configSha256` manually.
 
 ---
 
@@ -737,7 +756,7 @@ npx piper-farm init
 
 ## Model Registry
 
-The [`PIPER_MODELS`](src/expose-piper-models.ts) export provides pre-configured model definitions:
+The [`PIPER_MODELS`](src/expose-piper-models.ts) export provides pre-configured model definitions with SHA-256 hashes for integrity verification:
 
 ```typescript
 import { PIPER_MODELS, PIPER_REPO_BASE_URL } from 'piper-timing-farm';
@@ -758,10 +777,15 @@ interface PiperModelDefinition {
   numSpeakers: number;     // 1 for single-speaker
   isMultiSpeaker: boolean; // Derived from numSpeakers
   speakerId: number;       // Default speaker (0)
-  modelSha256?: string;    // SHA-256 hash for integrity
-  configSha256?: string;   // SHA-256 hash for integrity
+  modelSha256?: string;    // SHA-256 hash for integrity (auto-fetched from HF API if missing)
+  configSha256?: string;   // SHA-256 hash for integrity (auto-fetched from HF API if missing)
 }
 ```
+
+> [!TIP]
+> **HuggingFace Auto-Fetch:** For models hosted on HuggingFace, SHA-256 hashes are automatically fetched from the HF API (`lfs.oid` field) if not provided in the config. This means zero-configuration integrity verification for HF-hosted models.
+>
+> **Recommendation:** Host your custom models on HuggingFace to benefit from automatic SHA-256 verification without manual hash computation.
 
 **Available Models & Licenses:**
 
