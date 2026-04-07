@@ -26,6 +26,7 @@ import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
 export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & { 
   getActiveModelId: () => string | null;
   cancelDownload: (modelId: string) => Promise<void>;
+  clearAndRedownloadModel: (modelId: string) => Promise<void>;
   getDownloadState: () => Map<string, DownloadState>;
 } {
   let farm: PiperWorkerFarm | null = null;
@@ -153,6 +154,11 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
     /** Cancel a specific model's download. Purges OPFS partial files. */
     async cancelDownload(modelId: string) {
       await downloader.cancel(modelId);
+    },
+
+    /** Purge cached OPFS files for a model and re-download from scratch. */
+    async clearAndRedownloadModel(modelId: string) {
+      await downloader.clearAndRedownloadModel(modelId);
     },
 
     /** Returns a snapshot of every model's download lifecycle. */

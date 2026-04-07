@@ -10,6 +10,80 @@ function extractHFRepoPath(url: string): { repo: string; path: string; revision:
 }
 
 /**
+ * Fetches SHA-256 hash from HuggingFace API for a given file.
+ * The HF API returns file metadata including lfs.oid (SHA-256 hash).
+ * 
+ * @param repo - Repository path (e.g., "rinaldow/piper-onnx-durations")
+ * @param revision - Branch/revision (e.g., "main")
+ * @param filePath - File path within repo (e.g., "english/US/male/Bryce/en_US-bryce-medium.onnx")
+ * @returns SHA-256 hash string, or null if not found
+ */
+async function fetchHFSha256(
+  repo: string,
+  revision: string,
+  filePath: string
+): Promise<string | null> {
+  try {
+    // Get the directory path (remove filename)
+    const pathParts = filePath.split('/');
+    const filename = pathParts.pop() || '';
+    const dirPath = pathParts.join('/');
+    
+    // Construct API URL
+    const apiUrl = `https://huggingface.co/api/models/${repo}/tree/${revision}/${dirPath}`;
+    
+    const response = await fetch(apiUrl);
+    if (!response.ok) return null;
+    
+    const files: Array<{ path: string; lfs?: { oid: string } }> = await response.json();
+    
+    // Find the file and extract lfs.oid (SHA-256)
+    const fileMeta = files.find(f => f.path === filePath || f.path.endsWith(filename));
+    if (fileMeta?.lfs?.oid) {
+      return fileMeta.lfs.oid;
+    }
+    
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads a `.meta` marker file from OPFS.
+ * Returns the stored SHA-256 string, or null if not found.
+ */
+async function readMetaMarker(
+  voicesDir: FileSystemDirectoryHandle,
+  filename: string
+): Promise<string | null> {
+  try {
+    const handle = await voicesDir.getFileHandle(`${filename}.meta`);
+    const file = await handle.getFile();
+    const text = await file.text();
+    return text.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Writes a `.meta` marker file containing the verified SHA-256 hash.
+ * This marks the corresponding asset as integrity-verified.
+ */
+async function writeMetaMarker(
+  voicesDir: FileSystemDirectoryHandle,
+  filename: string,
+  sha256: string
+): Promise<void> {
+  const handle = await voicesDir.getFileHandle(`${filename}.meta`, { create: true });
+  // @ts-ignore — createWritable is available in OPFS contexts
+  const writable = await handle.createWritable();
+  await writable.write(sha256);
+  await writable.close();
+}
+
+/**
  * OPFS (Origin Private File System) Asset Resolver.
  * 
  * Provides a persistent, read-through cache for large binary assets (models, wasm).
@@ -35,6 +109,7 @@ export async function resolveOpfsAsset(
 ): Promise<ArrayBuffer> {
 
   const filename = `${modelId}.${extension}`;
+  const hfInfo = extractHFRepoPath(url);
   
   try {
     const root = await navigator.storage.getDirectory();
@@ -42,29 +117,46 @@ export async function resolveOpfsAsset(
     
     let downloadedBytes = 0;
     
-    // 1. Try to read from OPFS
+    // 1. Try to read from OPFS with integrity verification
     try {
       const fileHandle = await voicesDir.getFileHandle(filename);
       const file = await fileHandle.getFile();
-      
-      // We assume if it exists in OPFS and expectedSha256 wasn't requested (or we only check on download),
-      // we can trust it. We'll do a basic size check or just try a HEAD for resumable 
-      // but without target size, OPFS caching is assumed valid unless explicitly corrupted.
       downloadedBytes = file.size;
 
-      // If we're fully cached, just return it (One-Time verification happens on download)
-      if (downloadedBytes > 0) {
-        // Fast-path: Trust the cache
-        return await file.arrayBuffer();
+      if (downloadedBytes > 0 && expectedSha256) {
+        // Check .meta marker — if it matches, the file was previously verified
+        const verifiedHash = await readMetaMarker(voicesDir, filename);
+        if (verifiedHash === expectedSha256.toLowerCase()) {
+          return await file.arrayBuffer();
+        }
+        // .meta missing or mismatch — file may be partial/corrupt.
+        // Fall through to network fetch with Range header for resumption.
       }
-    } catch (err) {
+    } catch {
       // File not found or empty, proceed to fetch
+    }
+
+    // SECURITY: SHA-256 is mandatory for integrity verification.
+    // If not provided, attempt to fetch from HuggingFace API for HF URLs.
+    if (!expectedSha256 && hfInfo) {
+      const fetchedSha256 = await fetchHFSha256(hfInfo.repo, hfInfo.revision, hfInfo.path);
+      if (fetchedSha256) {
+        expectedSha256 = fetchedSha256;
+      }
+    }
+    
+    // If still no SHA-256, we cannot safely verify the download.
+    if (!expectedSha256) {
+      throw new Error(
+        `SHA-256 hash is required for integrity verification of "${filename}". ` +
+        `Provide the expectedSha256 parameter. ` +
+        `For HuggingFace models, the hash is automatically fetched from the API.`
+      );
     }
 
     // 2. Fetch from Network with Range and Abort Support
     let stream: ReadableStream<Uint8Array>;
     let totalBytes = 0;
-    const hfInfo = extractHFRepoPath(url);
 
     if (hfInfo) {
       // Hugging Face Hub (Xet Protocol)
@@ -154,13 +246,16 @@ export async function resolveOpfsAsset(
     const finalFile = await fileHandle.getFile();
     const finalBuffer = await finalFile.arrayBuffer();
 
-    // 4. Verify Integrity (One-Time purely after download completes)
+    // 4. Verify Integrity and write .meta marker
     if (expectedSha256) {
       try {
         await verifySha256(finalBuffer, expectedSha256, url);
+        // Mark as verified so future loads skip hashing
+        await writeMetaMarker(voicesDir, filename, expectedSha256.toLowerCase());
       } catch (err) {
-        // Delete corrupt file
-        await voicesDir.removeEntry(filename);
+        // Delete corrupt file and any stale marker
+        try { await voicesDir.removeEntry(filename); } catch {}
+        try { await voicesDir.removeEntry(`${filename}.meta`); } catch {}
         throw err;
       }
     }

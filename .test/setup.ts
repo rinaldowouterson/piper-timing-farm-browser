@@ -10,15 +10,61 @@ import { vi, beforeEach } from 'vitest';
 const mockOpfsFiles = new Map<string, ArrayBuffer>();
 
 const mockFileHandle = (name: string) => ({
-    getFile: async () => ({
-        arrayBuffer: async () => mockOpfsFiles.get(name) || new ArrayBuffer(0),
-        text: async () => new TextDecoder().decode(mockOpfsFiles.get(name) || new Uint8Array())
-    }),
-    createWritable: async () => {
-        let buffer: ArrayBuffer;
+    getFile: async () => {
+        const buf = mockOpfsFiles.get(name) || new ArrayBuffer(0);
         return {
-            write: async (data: ArrayBuffer) => { buffer = data; },
-            close: async () => { mockOpfsFiles.set(name, buffer); }
+            size: buf.byteLength,
+            arrayBuffer: async () => buf,
+            text: async () => new TextDecoder().decode(buf)
+        };
+    },
+    createWritable: async (opts?: { keepExistingData?: boolean }) => {
+        // Start with existing data if keepExistingData is true, else empty
+        let chunks: { position: number; data: Uint8Array }[] = [];
+        let existingData = (opts?.keepExistingData && mockOpfsFiles.has(name))
+            ? new Uint8Array(mockOpfsFiles.get(name)!)
+            : new Uint8Array(0);
+        let closed = false;
+        
+        const writer = {
+            write: async (input: ArrayBuffer | string | { type: string; position: number; data: any }) => {
+                if (closed) throw new Error('Writer is closed');
+                if (input instanceof ArrayBuffer || typeof input === 'string') {
+                    // Simple overwrite (used by writeMetaMarker)
+                    const encoded = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input);
+                    existingData = encoded;
+                } else if (input && typeof input === 'object' && 'position' in input) {
+                    // Positional write (used by stream writer)
+                    chunks.push({ position: input.position, data: new Uint8Array(input.data.buffer || input.data) });
+                }
+            },
+            close: async () => {
+                closed = true;
+                if (chunks.length > 0) {
+                    // Calculate total size from existing + new chunks
+                    let maxEnd = existingData.length;
+                    for (const c of chunks) {
+                        maxEnd = Math.max(maxEnd, c.position + c.data.length);
+                    }
+                    const merged = new Uint8Array(maxEnd);
+                    merged.set(existingData);
+                    for (const c of chunks) {
+                        merged.set(c.data, c.position);
+                    }
+                    mockOpfsFiles.set(name, merged.buffer);
+                } else {
+                    // Simple write (meta markers, etc.)
+                    mockOpfsFiles.set(name, existingData.buffer);
+                }
+            },
+            abort: async () => { closed = true; }
+        };
+        
+        return {
+            write: writer.write,
+            close: writer.close,
+            // Support both direct write and getWriter() patterns
+            getWriter: () => writer
         };
     }
 });

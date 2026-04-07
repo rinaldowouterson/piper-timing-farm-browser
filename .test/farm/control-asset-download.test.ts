@@ -38,6 +38,9 @@ describe('Download Controller', () => {
         await controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         });
 
         const state = controller.getState();
@@ -55,10 +58,16 @@ describe('Download Controller', () => {
         const p1 = controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         });
         const p2 = controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         });
 
         // Same promise returned
@@ -85,6 +94,9 @@ describe('Download Controller', () => {
         const promise = controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         }).catch(() => {});
 
         // Cancel before download completes
@@ -112,10 +124,16 @@ describe('Download Controller', () => {
         const p1 = controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         }).catch(() => {});
         const p2 = controller.request('model-b', {
             onnx: 'https://example.com/model-b.onnx',
             config: 'https://example.com/model-b.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         }).catch(() => {});
 
         await controller.cancelAll();
@@ -132,6 +150,9 @@ describe('Download Controller', () => {
         await controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         });
 
         await controller.cancel('model-a');
@@ -161,11 +182,17 @@ describe('Download Controller', () => {
         controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
-        });
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
+        }).catch(() => {});
         controller.request('model-b', {
             onnx: 'https://example.com/model-b.onnx',
             config: 'https://example.com/model-b.onnx.json'
-        });
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
+        }).catch(() => {});
 
         // Prioritize model-b (should pause model-a)
         controller.prioritize('model-b');
@@ -191,6 +218,9 @@ describe('Download Controller', () => {
             await controller.request('model-fail', {
                 onnx: 'https://example.com/model-fail.onnx',
                 config: 'https://example.com/model-fail.onnx.json'
+            }, {
+                config: 'test-config-sha256',
+                onnx: 'test-onnx-sha256'
             });
         } catch (err) {
             // Expected to throw
@@ -280,10 +310,16 @@ describe('Download Controller', () => {
         controller.request('model-a', {
             onnx: 'https://example.com/model-a.onnx',
             config: 'https://example.com/model-a.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         }).catch(() => {});
         controller.request('model-b', {
             onnx: 'https://example.com/model-b.onnx',
             config: 'https://example.com/model-b.onnx.json'
+        }, {
+            config: 'test-config-sha256',
+            onnx: 'test-onnx-sha256'
         }).catch(() => {});
 
         // Wait briefly for both to enter downloading state
@@ -358,7 +394,10 @@ describe('Download Controller', () => {
                 onnx: 'https://example.com/model-progress.onnx',
                 config: 'https://example.com/model-progress.onnx.json'
             },
-            undefined,
+            {
+                config: 'test-config-sha256',
+                onnx: 'test-onnx-sha256'
+            },
             { onProgress }
         );
 

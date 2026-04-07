@@ -214,4 +214,6 @@ export interface DownloadController {
   cancelAll(): Promise<void>;
   /** Returns a snapshot of every model's download lifecycle. */
   getState(): Map<string, DownloadState>;
+  /** Purge cached OPFS files for a model and re-download from scratch. */
+  clearAndRedownloadModel(modelId: string): Promise<void>;
 }

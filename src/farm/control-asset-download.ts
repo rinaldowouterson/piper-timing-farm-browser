@@ -74,7 +74,7 @@ export function createAssetDownloadController(): DownloadController {
       const root = await navigator.storage.getDirectory();
       const voicesDir = await root.getDirectoryHandle("voices");
 
-      for (const ext of ["onnx", "onnx.json"]) {
+      for (const ext of ["onnx", "onnx.json", "onnx.meta", "onnx.json.meta"]) {
         try {
           await voicesDir.removeEntry(`${modelId}.${ext}`);
         } catch {}
@@ -82,25 +82,28 @@ export function createAssetDownloadController(): DownloadController {
     } catch {}
   }
 
-  function resumePaused(): void {
-    const paused = [...downloads.entries()]
-      .filter(([, d]) => d.state.state === 'paused')
-      .reverse();
+  function resumeNextPaused(): void {
+    const next = [...downloads.entries()]
+      .find(([, d]) => d.state.state === 'paused');
 
-    for (const [modelId, entry] of paused) {
-      entry.controller = new AbortController();
-      executeDownload(
-        modelId,
-        entry.urls,
-        entry.controller,
-        entry.state,
-        entry.expectedSha256,
-        entry.options
-      );
-    }
+    if (!next) return;
+    const [modelId, entry] = next;
+
+    entry.controller = new AbortController();
+    executeDownload(
+      modelId,
+      entry.urls,
+      entry.controller,
+      entry.state,
+      entry.expectedSha256,
+      entry.options
+    ).finally(() => {
+      // Chain: when this one finishes (success, error, or abort), try the next
+      resumeNextPaused();
+    });
   }
 
-  return {
+  const api: DownloadController = {
     request(
       modelId: string, 
       urls: { onnx: string; config: string }, 
@@ -146,11 +149,19 @@ export function createAssetDownloadController(): DownloadController {
         entry.controller = new AbortController();
         executeDownload(
           modelId, entry.urls, entry.controller, entry.state, entry.expectedSha256, entry.options
-        ).then(() => {
-          if (entry.state.state === 'complete') {
-            resumePaused();
-          }
+        ).finally(() => {
+          resumeNextPaused();
         });
+      } else if (entry && entry.state.state === 'downloading') {
+        // Already active — attach resumption chain to the existing promise
+        // so paused tasks resume when this download finishes.
+        // .catch suppresses the rejection here — the consumer already handles it.
+        entry.promise.finally(() => {
+          resumeNextPaused();
+        }).catch(() => {});
+      } else if (entry && entry.state.state === 'complete') {
+        // Already done — immediately resume any tasks we just paused
+        resumeNextPaused();
       }
     },
 
@@ -186,6 +197,32 @@ export function createAssetDownloadController(): DownloadController {
         snapshot.set(id, { ...entry.state });
       }
       return snapshot;
+    },
+
+    async clearAndRedownloadModel(modelId) {
+      const entry = downloads.get(modelId);
+      if (!entry) return;
+
+      const { urls, expectedSha256, options } = entry;
+
+      // Abort any active download for this model
+      entry.controller.abort();
+      entry.state.state = 'cancelled';
+      
+      // Reject the original promise so it doesn't hang forever
+      // The consumer's .catch() will handle this gracefully
+      entry.reject(new Error('Download cleared for redownload'));
+
+      // Purge OPFS files (model + config + .meta markers)
+      await purgeOpfs(modelId);
+
+      // Remove stale entry so request() treats this as fresh
+      downloads.delete(modelId);
+
+      // Re-request from scratch
+      return api.request(modelId, urls, expectedSha256, options);
     }
   };
+
+  return api;
 }

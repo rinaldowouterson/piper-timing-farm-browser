@@ -305,10 +305,10 @@ Only after the model files are fully cached does the library create a **Shadow P
 
 All model and WASM assets are cached in the **Origin Private File System (OPFS)** for persistence across sessions:
 
-1. **Check OPFS** — If asset exists, return immediately
-2. **Fetch from network** — If missing, download with Range support
-3. **Verify SHA-256** — High-performance one-time integrity check performed during the download/caching phase. Subsequent loads from OPFS are trusted for maximum speed.
-4. **Write to OPFS** — Store for future sessions
+1. **Check OPFS + `.meta` marker** — If asset exists with a verified SHA-256 marker, return immediately (zero-latency fast-path)
+2. **Fetch from network** — If missing or marker mismatch, download with Range support (resumes partial downloads)
+3. **Verify SHA-256** — Integrity check performed during download; on success, a `.meta` marker is written for instant future loads
+4. **Write to OPFS** — Stream directly to filesystem (zero RAM buffering, even for 30MB+ models)
 
 **Implementation:** [`resolve-opfs-asset.ts`](src/utils/resolve-opfs-asset.ts)
 
@@ -317,38 +317,38 @@ export async function resolveOpfsAsset(
   url: string,
   modelId: string,
   // ...
+  expectedSha256?: string,
   options?: { signal?: AbortSignal; prioritizeSelected?: boolean; onProgress?: (downloaded: number, total: number) => void }
 ): Promise<ArrayBuffer> {
   const root = await navigator.storage.getDirectory();
   const voicesDir = await root.getDirectoryHandle("voices", { create: true });
   
-  // 1. Try OPFS first
+  // 1. Try OPFS with .meta marker verification (fast-path)
   try {
     const fileHandle = await voicesDir.getFileHandle(filename);
     const file = await fileHandle.getFile();
-    if (file.size > 0) return await file.arrayBuffer();
+    if (file.size > 0) {
+      // Check .meta marker for verified SHA-256
+      const metaMarker = await readMetaMarker(voicesDir, filename);
+      if (metaMarker === expectedSha256) {
+        return await file.arrayBuffer(); // Instant load, zero hashing
+      }
+      // Marker mismatch → fall through to network fetch (partial/corrupt file)
+    }
   } catch { /* Not found, proceed to fetch */ }
   
-  // 2. Fetch using Stream (with Hugging Face Xet acceleration if applicable)
-  // Xet Protocol handles multi-threaded chunk fetching behind the scenes for HF URLs
-  const stream = await getReadableStream(url, downloadedBytes); 
+  // 2. Fetch using Stream (with Range support for resumption)
+  const stream = await getReadableStream(url, downloadedBytes);
   
   // 3. Write to OPFS via Stream (Zero-memory-buffering)
   const writable = await fileHandle.createWritable({ keepExistingData: true });
-  const reader = stream.getReader();
+  // ... streaming write loop ...
   
-  let position = downloadedBytes;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    await writable.write({ type: 'write', position, data: value });
-    position += value.length;
-    options?.onProgress?.(position, totalBytes); // Real-time UI updates
+  // 4. Verify SHA-256 and write .meta marker on success
+  if (expectedSha256) {
+    await verifySha256(finalBuffer, expectedSha256, url);
+    await writeMetaMarker(voicesDir, filename, expectedSha256);
   }
-  await writable.close();
-  
-  // 4. Verify SHA-256 if provided
-  if (expectedSha256) await verifySha256(finalBuffer, expectedSha256, url);
   
   return finalBuffer;
 }
@@ -420,6 +420,9 @@ await provider.init({
 ```typescript
 // Cancel a specific model and purge its partial OPFS files
 await provider.cancelDownload('en_US-libritts-high');
+
+// Force fresh download for a corrupted model (purge + re-download)
+await provider.clearAndRedownloadModel('en_US-bryce-medium');
 
 // Cancel ALL active downloads and shut down the farm
 provider.terminate();
@@ -560,6 +563,7 @@ await provider.init(config: FarmConfig); // Serves for initial load and fast hot
 await provider.synthesize(text: string, options?: SynthesizeOptions);
 await provider.clearPiperModelCache();
 await provider.cancelDownload(modelId: string);
+await provider.clearAndRedownloadModel(modelId: string); // Purge + fresh download for corrupted models
 provider.terminate();
 provider.prepareTransition(targetModelId: string);
 
