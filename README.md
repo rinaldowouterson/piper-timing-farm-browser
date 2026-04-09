@@ -247,30 +247,31 @@ function processQueue() {
 
 Switching models involves two strictly sequential phases. **Phase 1 must fully complete before Phase 2 begins** — the library never allocates WebAssembly memory until model files are 100% present in OPFS.
 
-#### Phase 1: Download Prioritization
+#### Phase 1: FIFO Download Queue
 
 When `provider.init({ modelId: 'model-c' })` is called:
 
-1. **Prioritize** — All other in-flight downloads are paused. Full bandwidth is reserved for `model-c`.
-2. **Download** — The `.onnx` model and `.onnx.json` config are fetched (or resumed from partial OPFS state) with real-time progress tracking.
-3. **Verify** — If SHA-256 hashes were provided, integrity is verified during the caching phase.
+1. **Queue** — The model is added to a FIFO download queue. Downloads proceed one at a time to prevent OPFS write-lock contention.
+2. **Download** — The `.onnx` model and `.onnx.json` config are fetched with real-time progress tracking.
+3. **Verify** — SHA-256 integrity verification is mandatory; on success, a `.meta` marker is written for instant future loads.
 4. **Cache** — Files are streamed directly to OPFS. Zero RAM buffering, even for 30MB+ models.
 
-Once `model-c` completes, all previously paused downloads **automatically resume** in LIFO order (most recently requested first).
-
-**Concrete Example:**
+**FIFO Ordering Example:**
 
 ```
 User clicks: Model A → Model B → Model C (in rapid succession)
 
-[T0] Model A starts downloading
-[T1] Model B requested → Model A paused, Model B starts downloading
-[T2] Model C requested → Model B paused, Model C starts downloading
-[T3] Model C completes → Phase 2 begins for Model C
-[T4] Model B resumes downloading in background (LIFO: B before A)
-[T5] Model B completes → Model A resumes downloading
-[T6] Model A completes → all models cached in OPFS for instant future loads
+[T0] Model A starts downloading (first in queue)
+[T1] Model B requested → Added to queue behind A
+[T2] Model C requested → Added to queue behind B
+[T3] Model A completes → Phase 2 begins for Model A
+[T4] Model B starts downloading
+[T5] Model B completes → Model C starts downloading
+[T6] Model C completes → all models cached in OPFS for instant future loads
 ```
+
+> [!TIP]
+> **Skipping the Queue:** If you need a specific model immediately, cancel pending downloads with `provider.cancelDownload(modelId)` to remove them from the queue. The next model in line will then begin downloading.
 
 > [!IMPORTANT]
 > **Download ≠ Pool creation.** No WebAssembly workers are spawned during Phase 1. The download controller is purely concerned with network I/O and OPFS caching. Phase 2 only begins after the download promise resolves.
@@ -307,7 +308,7 @@ All model and WASM assets are cached in the **Origin Private File System (OPFS)*
 
 1. **Check OPFS + `.meta` marker** — If asset exists with a verified SHA-256 marker, return immediately (zero-latency fast-path)
 2. **Auto-fetch SHA-256 (HuggingFace)** — If SHA-256 not provided and URL is from HuggingFace, fetch hash from HF API (`lfs.oid` field)
-3. **Fetch from network** — If missing or marker mismatch, download with Range support (resumes partial downloads)
+3. **Fetch from network** — If missing or marker mismatch, download fresh (clean start, no partial resumption)
 4. **Verify SHA-256** — Integrity check is **mandatory**; on success, a `.meta` marker is written for instant future loads
 5. **Write to OPFS** — Stream directly to filesystem (zero RAM buffering, even for 30MB+ models)
 
@@ -345,7 +346,7 @@ export async function resolveOpfsAsset(
     return await file.arrayBuffer(); // Instant load, zero hashing
   }
   
-  // 2. Fetch using Stream (with Range support for resumption)
+  // 2. Fetch using Stream (clean download, no partial resumption)
   // 3. Write to OPFS via Stream (zero-memory-buffering)
   // 4. Verify SHA-256 and write .meta marker on success
   await verifySha256(finalBuffer, expectedSha256, url);
@@ -382,27 +383,32 @@ await provider.clearAndRedownloadModel('en_US-bryce-medium');  // Force fresh do
 
 ### Download Controller
 
-The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manages concurrent model downloads with:
+The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manages model downloads with a **FIFO queue architecture**:
 
-- **Hugging Face Xet Protocol** — Accelerates downloads natively using chunked parallel re-assembly
-- **Deduplication** — Same model requested twice returns same promise
-- **Automatic Prioritization** — The currently selected model gets full bandwidth; all others are paused
-- **Serial Resume** — Paused downloads resume automatically **one at a time** after the priority download completes (prevents OPFS write-lock contention)
-- **Per-Model Cancellation** — Abort and purge partial OPFS files for a specific model
+- **Registry + Queue Pattern** — A `Map` tracks download state; an `Array` sequences downloads in request order
+- **Deduplication** — Same model requested twice returns the same promise
+- **FIFO Ordering** — Downloads proceed one at a time in the order they were requested (prevents OPFS write-lock contention)
+- **Per-Model Cancellation** — Abort and purge partial OPFS files for a specific model; removes from queue
 - **Force Redownload** — `clearAndRedownloadModel()` purges cache and starts fresh download for corrupted models
 - **Progress Observability** — Push (callback) and Pull (snapshot) mechanisms for real-time progress
 
-**Download State Machine:**
+**Download State Machine (4 States):**
 
 ```
-queued → downloading → complete
-          ↓
-        paused → downloading (resumed automatically, one at a time)
-          ↓
-        cancelled (OPFS purged including .meta markers)
-          ↓
-        error
+pending → downloading → complete
+              ↓
+            error (OPFS purged automatically)
 ```
+
+| State | Meaning | User Action Available |
+|-------|---------|----------------------|
+| `pending` | Queued, waiting for turn | `cancelDownload()` to remove from queue |
+| `downloading` | Active transfer in progress | `cancelDownload()` to abort and purge |
+| `complete` | Files cached in OPFS, verified | `clearAndRedownloadModel()` if corrupted |
+| `error` | Download failed, OPFS cleaned | Call `init()` again to retry |
+
+> [!NOTE]
+> The `cancelled` state no longer exists as a separate state. When you call `cancelDownload()`, the entry is immediately removed from the registry and queue, and OPFS files are purged. This simplifies the state model and prevents stale entries from accumulating.
 
 **Snapshot Polling (Pull):**
 
@@ -410,7 +416,8 @@ queued → downloading → complete
 // Observe ALL downloads at once — ideal for a "Downloads Dashboard" UI
 const state = provider.getDownloadState();
 // Map<string, DownloadState> where DownloadState = {
-//   modelId, state, bytesDownloaded, bytesTotal, progress (0.0–1.0), error?
+//   modelId, state: 'pending' | 'downloading' | 'complete' | 'error',
+//   bytesDownloaded, bytesTotal, progress (0.0–1.0), error?
 // }
 ```
 
@@ -433,7 +440,7 @@ await provider.init({
 **Per-Model Cancellation:**
 
 ```typescript
-// Cancel a specific model and purge its partial OPFS files
+// Cancel a specific model: removes from queue, aborts download, purges OPFS
 await provider.cancelDownload('en_US-libritts-high');
 
 // Force fresh download for a corrupted model (purge + re-download)
@@ -442,6 +449,18 @@ await provider.clearAndRedownloadModel('en_US-bryce-medium');
 
 // Cancel ALL active downloads and shut down the farm
 provider.terminate();
+```
+
+**Skipping the Queue (Manual Prioritization):**
+
+Since downloads proceed in FIFO order, you can "prioritize" a model by canceling pending downloads:
+
+```typescript
+// User wants Model C immediately, but Model A and B are queued first
+await provider.cancelDownload('en_US-model-a');
+await provider.cancelDownload('en_US-model-b');
+// Now Model C will start downloading immediately when requested
+await provider.init({ modelId: 'en_US-model-c', voiceId: 'en_US-model-c' });
 ```
 
 > [!TIP]
@@ -621,7 +640,6 @@ interface FarmConfig {
   voiceId: string;            // Voice identifier (usually matches modelId)
   modelId: string;            // Model identifier (e.g., 'en_US-bryce-medium')
   cpuInstances?: number;      // Number of parallel workers (default: 2)
-  prioritizeSelected?: boolean; // Download prioritization (default: true)
   modelUrls?: {               // Optional: Custom model URLs
     onnx: string;
     config: string;
@@ -634,6 +652,9 @@ interface FarmConfig {
   onProgress?: (state: DownloadState) => void;  // Optional: Download progress callback
 }
 ```
+
+> [!NOTE]
+> The `prioritizeSelected` option has been removed. Downloads now proceed in strict FIFO order. To "prioritize" a model, cancel pending downloads with [`provider.cancelDownload()`](src/providers/create-piper-provider.ts) before requesting the desired model.
 
 ### `SynthesizeOptions`
 
@@ -854,12 +875,14 @@ if (file.size > 0) {
 
 **Effect:** Subsequent sessions load models in ~50ms (OPFS read) vs ~5s (network download).
 
-### Low-Memory Streaming & Resumable Downloads
+### Low-Memory Streaming Downloads
 
-If a standard fetch download is interrupted (network loss, cancellation), the next attempt resumes from the last byte using `Range` HTTP headers.
-For Hugging Face models, the `XetBlob` stream naturally reconstructs the file using localized deduplicated chunk fetching.
+For Hugging Face models, the `XetBlob` stream from `@huggingface/hub` naturally reconstructs the file using localized deduplicated chunk fetching, providing efficient downloads even for large models.
 
 To prevent Out-of-Memory (OOM) crashes on low-end devices, the library avoids buffering large 30MB+ `.onnx` models into RAM. Instead, it reads straight from the `ReadableStream` of the fetch/Xet response into a `FileSystemWritableFileStream` directly on OPFS.
+
+> [!NOTE]
+> Range header support for partial download resumption has been removed. If a download is interrupted, the next attempt starts fresh. This simplifies the download logic and ensures clean, verified files without partial state management.
 
 ---
 
@@ -890,7 +913,7 @@ import type {
   PiperPaths,
   OnnxRuntimePaths,
   CallbackModuleConfig,
-  DownloadState,
+  DownloadState,        // state: 'pending' | 'downloading' | 'complete' | 'error'
   DownloadController,
   PiperMetadata,
   SynthesizeOptions,

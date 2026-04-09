@@ -192,17 +192,17 @@ export interface DownloadState {
 
 /**
  * Stateful download controller for model assets.
- * Manages prioritization, cancellation, and OPFS cleanup.
+ * Manages FIFO queue sequencing, cancellation, and OPFS cleanup.
  */
 export interface DownloadController {
-  /** Start or resume a model download. Deduplicates by modelId. */
+  /** Start or retry a model download. Deduplicates by modelId. */
   request(
     modelId: string,
-    urls: { onnx: string; config: string }, 
+    urls: { onnx: string; config: string },
     expectedSha256?: { onnx?: string; config?: string },
     options?: { onProgress?: (state: DownloadState) => void }
   ): Promise<void>;
-  /** Cancel a download and purge any partial OPFS files. Record stays in state map. */
+  /** Cancel a download, remove from queue, and purge any partial OPFS files. Entry is deleted from registry. */
   cancel(modelId: string): Promise<void>;
   /** Cancel all pending and downloading items with cleanup. */
   cancelAll(): Promise<void>;
