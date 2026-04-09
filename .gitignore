@@ -29,3 +29,8 @@ vite.config.ts.timestamp-*
 
 # Test coverage
 coverage
+
+# Test output files
+test_output.txt
+*_output.txt
+*output*.txt

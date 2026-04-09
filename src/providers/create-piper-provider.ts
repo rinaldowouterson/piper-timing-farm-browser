@@ -20,8 +20,7 @@ import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
  *    and verifies it in the background while the current model continues 
  *    processing the queue.
  * 3. Once fully provisioned, it performs an atomic handoff (reinit).
- * 4. Download prioritization ensures the last-selected model loads first.
- * 5. Speaker ID flows per-request without triggering infrastructure changes.
+ * 4. Speaker ID flows per-request without triggering infrastructure changes.
  */
 export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & { 
   getActiveModelId: () => string | null;
@@ -58,9 +57,6 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
         farm.prepareTransition(modelId);
       }
 
-      // Prioritize this model's download (pauses others)
-      downloader.prioritize(modelId);
-
       // 1. Download & Verify via the download controller
       try {
         await downloader.request(
@@ -70,7 +66,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
             onnx: config.modelSha256 || modelEntry?.modelSha256, 
             config: config.configSha256 || modelEntry?.configSha256 
           },
-          { prioritizeSelected: config.prioritizeSelected ?? true, onProgress: config.onProgress }
+          { onProgress: config.onProgress }
         );
       } catch (err) {
         // Download failed or was cancelled — clean up loading state

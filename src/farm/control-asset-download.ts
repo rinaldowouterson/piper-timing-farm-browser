@@ -2,227 +2,237 @@ import type { DownloadState, DownloadController } from "../types";
 import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
 
 /**
+ * Internal entry for tracking a download in the registry.
+ * Each entry represents a single model's download lifecycle.
+ */
+interface DownloadEntry {
+  state: DownloadState;
+  controller: AbortController;
+  promise: Promise<void>;
+  resolve: () => void;
+  /** Reject the download promise. Accepts unknown to match catch clause semantics. */
+  reject: (e: unknown) => void;
+  urls: { onnx: string; config: string };
+  expectedSha256?: { onnx?: string; config?: string };
+  options?: { onProgress?: (state: DownloadState) => void };
+}
+
+/**
  * Stateful Download Controller for model assets.
+ * Uses a Registry (Map) for state tracking and a Queue (Array) for FIFO sequencing.
  */
 export function createAssetDownloadController(): DownloadController {
-  const downloads = new Map<string, {
-    state: DownloadState;
-    controller: AbortController;
-    promise: Promise<void>;
-    resolve: () => void;
-    reject: (e: any) => void;
-    urls: { onnx: string; config: string };
-    expectedSha256?: { onnx?: string; config?: string };
-    options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void };
-  }>();
-
-  async function executeDownload(
-    modelId: string,
-    urls: { onnx: string; config: string },
-    controller: AbortController,
-    state: DownloadState,
-    expectedSha256?: { onnx?: string; config?: string },
-    options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void }
-  ): Promise<void> {
-    state.state = 'downloading';
-
-    try {
-      const onProgress = (downloaded: number, total: number) => {
-        state.bytesDownloaded = downloaded;
-        state.bytesTotal = total;
-        state.progress = total > 0 ? downloaded / total : 0;
-        options?.onProgress?.({ ...state });
-      };
-
-      await resolveOpfsAsset(
-        urls.config,
-        modelId,
-        "onnx.json",
-        expectedSha256?.config,
-        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected, onProgress }
-      );
-
-      if (controller.signal.aborted) return;
-
-      await resolveOpfsAsset(
-        urls.onnx,
-        modelId,
-        "onnx",
-        expectedSha256?.onnx,
-        { signal: controller.signal, prioritizeSelected: options?.prioritizeSelected, onProgress }
-      );
-
-      if (!controller.signal.aborted) {
-        state.state = 'complete';
-        state.progress = 1.0;
-        const entry = downloads.get(modelId);
-        if (entry) entry.resolve();
-      }
-    } catch (err) {
-      if (controller.signal.aborted) {
-        return;
-      }
-      state.state = 'error';
-      state.error = err instanceof Error ? err.message : String(err);
-      const entry = downloads.get(modelId);
-      if (entry) entry.reject(err);
-    }
-  }
+  const registry = new Map<string, DownloadEntry>();
+  const queue: string[] = [];
+  let activeId: string | null = null;
 
   async function purgeOpfs(modelId: string): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
       const voicesDir = await root.getDirectoryHandle("voices");
-
+      // Clean up all possible markers and files for this model
       for (const ext of ["onnx", "onnx.json", "onnx.meta", "onnx.json.meta"]) {
         try {
           await voicesDir.removeEntry(`${modelId}.${ext}`);
-        } catch {}
+        } catch { /* ignore if not exists */ }
       }
-    } catch {}
+    } catch { /* ignore root handle failures */ }
   }
 
-  function resumeNextPaused(): void {
-    const next = [...downloads.entries()]
-      .find(([, d]) => d.state.state === 'paused');
+  async function executeDownload(modelId: string, entry: DownloadEntry): Promise<void> {
+    entry.state.state = "downloading";
 
-    if (!next) return;
-    const [modelId, entry] = next;
+    try {
+      const onProgress = (downloaded: number, total: number) => {
+        entry.state.bytesDownloaded = downloaded;
+        entry.state.bytesTotal = total;
+        entry.state.progress = total > 0 ? downloaded / total : 0;
+        entry.options?.onProgress?.({ ...entry.state });
+      };
 
-    entry.controller = new AbortController();
-    executeDownload(
-      modelId,
-      entry.urls,
-      entry.controller,
-      entry.state,
-      entry.expectedSha256,
-      entry.options
-    ).finally(() => {
-      // Chain: when this one finishes (success, error, or abort), try the next
-      resumeNextPaused();
-    });
+      // Download config first
+      await resolveOpfsAsset(
+        entry.urls.config,
+        modelId,
+        "onnx.json",
+        entry.expectedSha256?.config,
+        { signal: entry.controller.signal, onProgress }
+      );
+
+      if (entry.controller.signal.aborted) return;
+
+      // Download ONNX model second
+      await resolveOpfsAsset(
+        entry.urls.onnx,
+        modelId,
+        "onnx",
+        entry.expectedSha256?.onnx,
+        { signal: entry.controller.signal, onProgress }
+      );
+
+      if (!entry.controller.signal.aborted) {
+        entry.state.state = "complete";
+        entry.state.progress = 1.0;
+        entry.resolve();
+      }
+    } catch (err) {
+      if (entry.controller.signal.aborted) {
+        return; // Silent exit on abort (cancel handles rejections)
+      }
+      
+      entry.state.state = "error";
+      entry.state.error = err instanceof Error ? err.message : String(err);
+      
+      // Clean up partial files on any error to ensure a clean slate for retries
+      await purgeOpfs(modelId);
+      
+      entry.reject(err);
+    }
   }
 
-  const api: DownloadController = {
-    request(
-      modelId: string, 
-      urls: { onnx: string; config: string }, 
-      expectedSha256?: { onnx?: string; config?: string },
-      options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void }
-    ): Promise<void> {
-      const existing = downloads.get(modelId);
-      if (existing && existing.state.state !== 'cancelled' && existing.state.state !== 'error') {
+  async function processQueue(): Promise<void> {
+    // If something is already downloading or nothing is in queue, idle
+    if (activeId || queue.length === 0) return;
+
+    activeId = queue.shift()!;
+    const entry = registry.get(activeId);
+    
+    // Safety check: if entry was deleted from registry while in queue
+    if (!entry) {
+      activeId = null;
+      return processQueue();
+    }
+
+    try {
+      await executeDownload(activeId, entry);
+    } finally {
+      activeId = null;
+      processQueue(); // Chain to the next in line
+    }
+  }
+
+  return {
+    request(modelId, urls, expectedSha256, options) {
+      const existing = registry.get(modelId);
+      
+      // Return existing promise if already and not in a terminal failure state
+      if (existing && (
+        existing.state.state === "complete" || 
+        existing.state.state === "pending" || 
+        existing.state.state === "downloading"
+      )) {
         return existing.promise;
       }
       
+      // If error or doesn't exist, create a fresh entry
+      // This allows retry of failed downloads by just calling request() again
       const state: DownloadState = {
-        modelId, state: 'queued', bytesDownloaded: 0, bytesTotal: 0, progress: 0
+        modelId,
+        state: "pending",
+        bytesDownloaded: 0,
+        bytesTotal: 0,
+        progress: 0,
       };
 
+      // Promise executor runs synchronously, so these are assigned before use.
+      // The definite assignment assertion (!) is safe here.
       let resolveFunc!: () => void;
-      let rejectFunc!: (e: any) => void;
+      let rejectFunc!: (e: unknown) => void;
       const promise = new Promise<void>((resolve, reject) => {
         resolveFunc = resolve;
         rejectFunc = reject;
       });
 
-      const controller = new AbortController();
-      downloads.set(modelId, { 
-        state, controller, promise, resolve: resolveFunc, reject: rejectFunc, 
-        urls, expectedSha256, options 
-      });
+      const entry: DownloadEntry = {
+        state,
+        controller: new AbortController(),
+        promise,
+        resolve: resolveFunc,
+        reject: rejectFunc,
+        urls,
+        expectedSha256,
+        options,
+      };
 
-      executeDownload(modelId, urls, controller, state, expectedSha256, options);
+      registry.set(modelId, entry);
+      
+      // Add to sequence if it's not already in it
+      if (!queue.includes(modelId)) {
+        queue.push(modelId);
+      }
+
+      processQueue(); // Attempt to start
       return promise;
     },
 
-    prioritize(modelId) {
-      for (const [id, entry] of downloads) {
-        if (id !== modelId && entry.state.state === 'downloading') {
-          entry.controller.abort();
-          entry.state.state = 'paused';
-        }
-      }
-
-      const entry = downloads.get(modelId);
-      if (entry && (entry.state.state === 'paused' || entry.state.state === 'queued')) {
-        entry.controller = new AbortController();
-        executeDownload(
-          modelId, entry.urls, entry.controller, entry.state, entry.expectedSha256, entry.options
-        ).finally(() => {
-          resumeNextPaused();
-        });
-      } else if (entry && entry.state.state === 'downloading') {
-        // Already active — attach resumption chain to the existing promise
-        // so paused tasks resume when this download finishes.
-        // .catch suppresses the rejection here — the consumer already handles it.
-        entry.promise.finally(() => {
-          resumeNextPaused();
-        }).catch(() => {});
-      } else if (entry && entry.state.state === 'complete') {
-        // Already done — immediately resume any tasks we just paused
-        resumeNextPaused();
-      }
-    },
-
     async cancel(modelId) {
-      const entry = downloads.get(modelId);
+      const entry = registry.get(modelId);
       if (!entry) return;
 
+      // 1. Abort the logic (safe even if pending or already completed)
       entry.controller.abort();
-      const wasActive = entry.state.state === 'downloading' || entry.state.state === 'paused' || entry.state.state === 'queued';
-      entry.state.state = 'cancelled';
-      if (wasActive) entry.reject(new Error("Cancelled"));
+      
+      // 2. Reject the promise so listeners aren't suspended indefinitely
+      const wasActive = entry.state.state === "pending" || entry.state.state === "downloading";
+      if (wasActive) {
+        entry.reject(new Error("Cancelled"));
+      }
+
+      // 3. Remove from sequencing queue if it hasn't started yet
+      const idx = queue.indexOf(modelId);
+      if (idx !== -1) {
+        queue.splice(idx, 1);
+      }
+
+      // 4. Wipe from registry and clean up OPFS
+      registry.delete(modelId);
       await purgeOpfs(modelId);
+
+      // 5. If this was the active download, force the queue to move on
+      if (activeId === modelId) {
+        activeId = null;
+        processQueue();
+      }
     },
 
     async cancelAll() {
-      const cancelPromises: Promise<void>[] = [];
+      // Clear queue so nothing new starts
+      queue.length = 0;
 
-      for (const [modelId, entry] of downloads) {
-        if (entry.state.state === 'downloading' || entry.state.state === 'paused' || entry.state.state === 'queued') {
-          entry.controller.abort();
-          entry.state.state = 'cancelled';
-          entry.reject(new Error("Cancelled"));
-          cancelPromises.push(purgeOpfs(modelId));
+      const results: Promise<void>[] = [];
+      for (const [id, entry] of registry) {
+        // Abort and reject if it was in-flight or waiting
+        entry.controller.abort();
+        if (entry.state.state === "pending" || entry.state.state === "downloading") {
+          entry.reject(new Error("CancelledAll"));
         }
+        results.push(purgeOpfs(id));
       }
 
-      await Promise.all(cancelPromises);
+      registry.clear();
+      activeId = null;
+      await Promise.all(results);
     },
 
     getState() {
       const snapshot = new Map<string, DownloadState>();
-      for (const [id, entry] of downloads) {
+      for (const [id, entry] of registry) {
         snapshot.set(id, { ...entry.state });
       }
       return snapshot;
     },
 
     async clearAndRedownloadModel(modelId) {
-      const entry = downloads.get(modelId);
-      if (!entry) return;
+      const existing = registry.get(modelId);
+      if (!existing) return;
 
-      const { urls, expectedSha256, options } = entry;
+      const { urls, expectedSha256, options } = existing;
 
-      // Abort any active download for this model
-      entry.controller.abort();
-      entry.state.state = 'cancelled';
-      
-      // Reject the original promise so it doesn't hang forever
-      // The consumer's .catch() will handle this gracefully
-      entry.reject(new Error('Download cleared for redownload'));
+      // 1. Fully cancel the previous entry
+      await this.cancel(modelId);
 
-      // Purge OPFS files (model + config + .meta markers)
-      await purgeOpfs(modelId);
-
-      // Remove stale entry so request() treats this as fresh
-      downloads.delete(modelId);
-
-      // Re-request from scratch
-      return api.request(modelId, urls, expectedSha256, options);
-    }
+      // 2. Re-request from scratch (this will add to registry and queue)
+      return this.request(modelId, urls, expectedSha256, options);
+    },
   };
-
-  return api;
 }

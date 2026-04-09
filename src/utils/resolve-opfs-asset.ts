@@ -105,7 +105,7 @@ export async function resolveOpfsAsset(
   modelId: string,
   extension: string,
   expectedSha256?: string,
-  options?: { signal?: AbortSignal; prioritizeSelected?: boolean; onProgress?: (downloaded: number, total: number) => void }
+  options?: { signal?: AbortSignal; onProgress?: (downloaded: number, total: number) => void }
 ): Promise<ArrayBuffer> {
 
   const filename = `${modelId}.${extension}`;
@@ -115,22 +115,18 @@ export async function resolveOpfsAsset(
     const root = await navigator.storage.getDirectory();
     const voicesDir = await root.getDirectoryHandle("voices", { create: true });
     
-    let downloadedBytes = 0;
-    
-    // 1. Try to read from OPFS with integrity verification
     try {
       const fileHandle = await voicesDir.getFileHandle(filename);
       const file = await fileHandle.getFile();
-      downloadedBytes = file.size;
 
-      if (downloadedBytes > 0 && expectedSha256) {
+      if (file.size > 0 && expectedSha256) {
         // Check .meta marker — if it matches, the file was previously verified
         const verifiedHash = await readMetaMarker(voicesDir, filename);
         if (verifiedHash === expectedSha256.toLowerCase()) {
           return await file.arrayBuffer();
         }
         // .meta missing or mismatch — file may be partial/corrupt.
-        // Fall through to network fetch with Range header for resumption.
+        // Fall through to clean download.
       }
     } catch {
       // File not found or empty, proceed to fetch
@@ -154,7 +150,7 @@ export async function resolveOpfsAsset(
       );
     }
 
-    // 2. Fetch from Network with Range and Abort Support
+    // 2. Fetch from Network
     let stream: ReadableStream<Uint8Array>;
     let totalBytes = 0;
 
@@ -167,58 +163,29 @@ export async function resolveOpfsAsset(
       });
       if (!blob) throw new Error("Failed to resolve HF file");
       
-      // Xet fetches internally construct the full file stream; we overwrite from position 0.
-      downloadedBytes = 0;
       totalBytes = blob.size;
       stream = blob.stream() as ReadableStream<Uint8Array>;
     } else {
       // Standard Fetch
-      const headers: Record<string, string> = {};
-      if (downloadedBytes > 0) {
-        headers['Range'] = `bytes=${downloadedBytes}-`;
-      }
-
-      const fetchOptions: RequestInit = {
-        headers,
-        signal: options?.signal,
-      };
+      const response = await fetch(url, { signal: options?.signal });
       
-      if (options?.prioritizeSelected) {
-        (fetchOptions as any).priority = 'high';
-      }
-
-      const response = await fetch(url, fetchOptions);
-      
-      if (response.status === 416) {
-        const fileHandle = await voicesDir.getFileHandle(filename);
-        return await (await fileHandle.getFile()).arrayBuffer();
-      }
-      
-      if (!response.ok && response.status !== 206) {
+      if (!response.ok) {
         throw new Error(`Failed to fetch asset: ${response.statusText}`);
       }
       if (!response.body) {
         throw new Error(`Response body is null for ${url}`);
       }
       
-      // Estimate total capacity
-      const contentLen = Number(response.headers.get("Content-Length")) || 0;
-      totalBytes = response.status === 206 ? downloadedBytes + contentLen : contentLen;
-      
-      // Reset if not a partial response
-      if (response.status !== 206) {
-        downloadedBytes = 0;
-      }
-      
+      totalBytes = Number(response.headers.get("Content-Length")) || 0;
       stream = response.body;
     }
 
-    // 3. Write/Append to OPFS via Stream
+    // 3. Write to OPFS via Stream (clean start)
     const fileHandle = await voicesDir.getFileHandle(filename, { create: true });
     // @ts-ignore
-    const writable = await fileHandle.createWritable({ keepExistingData: true });
+    const writable = await fileHandle.createWritable();
     
-    let position = downloadedBytes;
+    let position = 0;
     const reader = stream.getReader();
 
     try {

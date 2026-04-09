@@ -93,8 +93,6 @@ export interface PiperWorkerConfig {
 	instanceId?: number;
   /** Optional callback to load in worker thread. */
   callbackModule?: CallbackModuleConfig;
-  /** Instructs downlaod manager to prioritize this model. */
-  prioritizeSelected?: boolean;
   modelSha256?: string;
   configSha256?: string;
 }
@@ -116,8 +114,6 @@ export interface FarmConfig {
 	cpuInstances?: number;
   /** Optional worker-thread callback for off-thread processing. */
   callbackModule?: CallbackModuleConfig;
-  /** Instructs downlaod manager to prioritize this model. Default is true. */
-  prioritizeSelected?: boolean;
   /** SHA-256 hashes for model integrity verification. */
   modelSha256?: string;
   configSha256?: string;
@@ -186,7 +182,7 @@ export interface PiperModelConfig {
  */
 export interface DownloadState {
   modelId: string;
-  state: 'queued' | 'downloading' | 'paused' | 'complete' | 'cancelled' | 'error';
+  state: 'pending' | 'downloading' | 'complete' | 'error';
   bytesDownloaded: number;
   bytesTotal: number;
   /** 0.0 to 1.0 */
@@ -204,13 +200,11 @@ export interface DownloadController {
     modelId: string,
     urls: { onnx: string; config: string }, 
     expectedSha256?: { onnx?: string; config?: string },
-    options?: { prioritizeSelected?: boolean; onProgress?: (state: DownloadState) => void }
+    options?: { onProgress?: (state: DownloadState) => void }
   ): Promise<void>;
-  /** Pause all other downloads and prioritize the given model. */
-  prioritize(modelId: string): void;
   /** Cancel a download and purge any partial OPFS files. Record stays in state map. */
   cancel(modelId: string): Promise<void>;
-  /** Cancel all active and paused downloads with cleanup. */
+  /** Cancel all pending and downloading items with cleanup. */
   cancelAll(): Promise<void>;
   /** Returns a snapshot of every model's download lifecycle. */
   getState(): Map<string, DownloadState>;

@@ -46,7 +46,7 @@ describe('OPFS Asset Integrity (.meta marker)', () => {
      *
      * Expected behavior:
      * - Check for .meta marker
-     * - If missing, trigger network fetch (Range request for remaining bytes)
+     * - If missing, trigger full network fetch
      * - After successful download + SHA verification, write .meta marker
      */
 
