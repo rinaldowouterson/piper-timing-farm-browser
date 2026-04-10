@@ -180,12 +180,10 @@ export async function resolveOpfsAsset(
       stream = response.body;
     }
 
-    // 3. Write to OPFS via Stream (clean start)
-    const fileHandle = await voicesDir.getFileHandle(filename, { create: true });
-    // @ts-ignore
-    const writable = await fileHandle.createWritable();
-    
-    let position = 0;
+    // 3. Download to RAM First (Atomic Buffer)
+    const chunks: Uint8Array[] = [];
+    let downloadedBytes = 0;
+    let lastProgressTime = 0;
     const reader = stream.getReader();
 
     try {
@@ -197,34 +195,43 @@ export async function resolveOpfsAsset(
         const { done, value } = await reader.read();
         if (done) break;
 
-        await writable.write({ type: 'write', position, data: value as any });
-        position += value.length;
+        chunks.push(value);
+        downloadedBytes += value.length;
 
-        if (options?.onProgress) {
-          options.onProgress(position, totalBytes || position);
+        // Throttled UI Updates: at most every 100ms to prevent main-thread saturation
+        const now = Date.now();
+        const throttleTime = 100;
+        if (options?.onProgress && (now - lastProgressTime > throttleTime || done)) {
+          options.onProgress(downloadedBytes, totalBytes || downloadedBytes);
+          lastProgressTime = now;
         }
       }
     } finally {
-      await writable.close();
       reader.releaseLock();
     }
     
-    // Re-read entire file for SHA-256 verification and return
-    const finalFile = await fileHandle.getFile();
-    const finalBuffer = await finalFile.arrayBuffer();
+    // Concatenate chunks into a single ArrayBuffer efficiently
+    const finalBuffer = await new Blob(chunks as BlobPart[]).arrayBuffer();
 
-    // 4. Verify Integrity and write .meta marker
+    // 4. Verify Integrity in RAM BEFORE writing to disk
     if (expectedSha256) {
-      try {
-        await verifySha256(finalBuffer, expectedSha256, url);
-        // Mark as verified so future loads skip hashing
-        await writeMetaMarker(voicesDir, filename, expectedSha256.toLowerCase());
-      } catch (err) {
-        // Delete corrupt file and any stale marker
-        try { await voicesDir.removeEntry(filename); } catch {}
-        try { await voicesDir.removeEntry(`${filename}.meta`); } catch {}
-        throw err;
-      }
+      await verifySha256(finalBuffer, expectedSha256, url);
+    }
+
+    // 5. Atomic Persistence — Write to OPFS only after verification passes
+    const fileHandle = await voicesDir.getFileHandle(filename, { create: true });
+    // @ts-ignore
+    const writable = await fileHandle.createWritable();
+    
+    try {
+      await writable.write(finalBuffer);
+    } finally {
+      await writable.close();
+    }
+    
+    // Mark as verified
+    if (expectedSha256) {
+      await writeMetaMarker(voicesDir, filename, expectedSha256.toLowerCase());
     }
 
     return finalBuffer;
