@@ -122,6 +122,14 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       return farm.synthesize(text, options);
     },
 
+    cancelSynthesis(requestId: string) {
+      farm?.cancelSynthesis(requestId);
+    },
+
+    cancelAllSynthesis() {
+      farm?.cancelAllSynthesis();
+    },
+
     terminate() {
       downloader.cancelAll();
       farm?.terminate();

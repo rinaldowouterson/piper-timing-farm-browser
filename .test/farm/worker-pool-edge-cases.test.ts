@@ -207,4 +207,129 @@ describe('Worker Pool Edge Cases', () => {
         spy.mockRestore();
         pool.terminate();
     });
+
+    describe('Self-Healing Worker Replacement (replaceWorker)', () => {
+        it('should terminate old worker and spawn a ready replacement', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            const onReady = vi.fn();
+            const onResult = vi.fn();
+            const pool = createWorkerPool(onReady, onResult);
+            await pool.init(baseConfig, 2);
+
+            const oldWorkers = pool.getWorkers();
+            const oldId = oldWorkers[0].id;
+
+            // Replace the first worker
+            pool.replaceWorker(oldId);
+
+            // The new worker should have a different ID
+            const newWorkers = pool.getWorkers();
+            expect(newWorkers[0].id).not.toBe(oldId);
+            expect(newWorkers.length).toBe(2);
+
+            // Initially marked as transitioning (not ready yet)
+            expect(newWorkers[0].transitioning).toBe(true);
+
+            // Wait for the mock worker to fire its 'ready' event (10ms setTimeout in mock)
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // After ready, transitioning should be cleared
+            expect(pool.getWorkers()[0].transitioning).toBe(false);
+
+            spy.mockRestore();
+            pool.terminate();
+        });
+
+        it('should maintain pool size after multiple rapid replacements', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            const onReady = vi.fn();
+            const onResult = vi.fn();
+            const pool = createWorkerPool(onReady, onResult);
+            await pool.init(baseConfig, 3);
+
+            expect(pool.getWorkerCount()).toBe(3);
+
+            // Replace all workers in rapid succession
+            const ids = pool.getWorkers().map(w => w.id);
+            for (const id of ids) {
+                pool.replaceWorker(id);
+            }
+
+            // Pool size must remain constant
+            expect(pool.getWorkerCount()).toBe(3);
+
+            // All new workers should be transitioning
+            const workers = pool.getWorkers();
+            for (const w of workers) {
+                expect(w.transitioning).toBe(true);
+            }
+
+            // Wait for all ready events
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // All should now be available
+            for (const w of pool.getWorkers()) {
+                expect(w.transitioning).toBe(false);
+            }
+
+            spy.mockRestore();
+            pool.terminate();
+        });
+
+        it('should exclude transitioning replacement from getNextAvailable()', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            const onReady = vi.fn();
+            const onResult = vi.fn();
+            const pool = createWorkerPool(onReady, onResult);
+            await pool.init(baseConfig, 1);
+
+            const oldId = pool.getWorkers()[0].id;
+            pool.replaceWorker(oldId);
+
+            // While transitioning, no worker should be available
+            expect(pool.getNextAvailable()).toBeNull();
+
+            // Wait for ready
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // Now the replacement should be available
+            expect(pool.getNextAvailable()).not.toBeNull();
+
+            spy.mockRestore();
+            pool.terminate();
+        });
+
+        it('should be a no-op for invalid worker id', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            const onReady = vi.fn();
+            const onResult = vi.fn();
+            const pool = createWorkerPool(onReady, onResult);
+            await pool.init(baseConfig, 2);
+
+            const countBefore = pool.getWorkerCount();
+
+            // Replace with a non-existent ID — should silently no-op
+            pool.replaceWorker(99999);
+
+            expect(pool.getWorkerCount()).toBe(countBefore);
+
+            spy.mockRestore();
+            pool.terminate();
+        });
+
+        it('should be a no-op before pool initialization', () => {
+            const onReady = vi.fn();
+            const onResult = vi.fn();
+            const pool = createWorkerPool(onReady, onResult);
+
+            // No init called — replaceWorker should silently return
+            pool.replaceWorker(0);
+
+            expect(pool.getWorkerCount()).toBe(0);
+        });
+    });
 });

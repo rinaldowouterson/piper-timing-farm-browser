@@ -135,6 +135,44 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
       });
     },
 
+    /**
+     * Self-healing worker replacement.
+     * 
+     * Forcefully terminates a specific worker thread (killing any active WASM
+     * execution) and spawns a fresh replacement with the current config.
+     * The replacement is marked `transitioning` until its `ready` event fires,
+     * preventing premature task dispatch.
+     * 
+     * This is the surgical middle-ground between:
+     * - Doing nothing (phantom CPU drain from uninterruptible WASM)
+     * - Full Shadow Pool rebuild (reinit — overkill for single-task cancellation)
+     */
+    replaceWorker(id: number) {
+      if (!currentConfig) return;
+
+      const idx = workers.findIndex(w => w.id === id);
+      if (idx === -1) return;
+
+      // 1. Forcefully terminate the old worker thread
+      workers[idx].worker.terminate();
+
+      // 2. Spawn a fresh replacement with a new unique ID
+      const newId = nextWorkerId++;
+      const replacement = createWorker(newId, currentConfig, (msg) => {
+        if (msg.type === 'ready') {
+          // 3. Clear transitioning flag when WASM is loaded and ready
+          replacement.transitioning = false;
+          onReady(msg.instanceId);
+        } else {
+          onResult(msg);
+        }
+      });
+      replacement.transitioning = true;
+
+      // 4. Swap into the same array position to maintain pool size
+      workers[idx] = replacement;
+    },
+
     getNextAvailable(): WorkerState | null {
       return workers.find(w => !w.busy && !w.transitioning) || null;
     },

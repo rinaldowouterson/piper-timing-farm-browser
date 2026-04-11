@@ -129,4 +129,51 @@ describe('Provider API', () => {
             spy.mockRestore();
         });
     });
+
+    describe('Granular Cancellation', () => {
+        it('should cancel specific synthesis via AbortSignal', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await provider.init({
+                voiceId: 'en_US-bryce-medium',
+                modelId: 'en_US-bryce-medium',
+                cpuInstances: 2
+            });
+            
+            const aborter = new AbortController();
+            const promise = provider.synthesize('Cancelled', { signal: aborter.signal });
+            aborter.abort();
+            
+            await expect(promise).rejects.toThrow('Synthesis cancelled');
+            spy.mockRestore();
+        });
+
+        it('should clear remaining queue via cancelAllSynthesis', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await provider.init({
+                voiceId: 'en_US-bryce-medium',
+                modelId: 'en_US-bryce-medium',
+                cpuInstances: 2
+            });
+            
+            // Queue up multiple tasks
+            const p1 = provider.synthesize('Task 1');
+            const p2 = provider.synthesize('Task 2');
+            const p3 = provider.synthesize('Task 3');
+            const p4 = provider.synthesize('Task 4');
+            const p5 = provider.synthesize('Task 5');
+            
+            // Cancel all immediately
+            provider.cancelAllSynthesis();
+            
+            await expect(p1).rejects.toThrow('Synthesis cancelled');
+            await expect(p2).rejects.toThrow('Synthesis cancelled');
+            await expect(p3).rejects.toThrow('Synthesis cancelled');
+            await expect(p4).rejects.toThrow('Synthesis cancelled');
+            await expect(p5).rejects.toThrow('Synthesis cancelled');
+            
+            expect(provider.metrics.queueLength).toBe(0);
+            
+            spy.mockRestore();
+        });
+    });
 });

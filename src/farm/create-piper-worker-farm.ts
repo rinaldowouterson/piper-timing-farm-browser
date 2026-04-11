@@ -20,7 +20,8 @@ import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
  */
 export function createPiperWorkerFarm(): PiperWorkerFarm {
   const queue: PendingRequest[] = [];
-  const processingRequestIds = new Set<string>();
+  /** Maps requestId → worker id for actively processing requests. */
+  const activeRequests = new Map<string, number>();
   const pool = createWorkerPool(onReady, onResult);
 
   function onReady(id: number) {
@@ -37,19 +38,31 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       if (worker) worker.busy = false;
 
       // 2. Clear processing status
-      processingRequestIds.delete(requestId);
+      activeRequests.delete(requestId);
 
       // 3. Update sequencer
       const pending = queue.find(r => r.requestId === requestId);
       if (pending) {
         pending.result = { ...result, callbackResult };
         processQueue();
+      } else {
+        // Request was logically aborted and removed from queue, but worker is now free.
+        processQueue();
       }
     } else if (msg.type === 'error') {
-      const { instanceId, error } = msg;
+      const { instanceId, error, originalRequest } = msg;
       console.error(`Worker ${instanceId} error:`, error);
       const worker = pool.getWorkers().find(w => w.id === instanceId);
       if (worker) worker.busy = false;
+      if (originalRequest && originalRequest.type === 'synthesize') {
+        const pending = queue.find(r => r.requestId === originalRequest.requestId);
+        if (pending) {
+          activeRequests.delete(originalRequest.requestId);
+          pending.reject(new Error(error));
+          queue.splice(queue.indexOf(pending), 1);
+        }
+      }
+      processQueue();
     }
   }
 
@@ -61,7 +74,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     }
 
     // 2. Assign pending requests to idle workers
-    const nextRequest = queue.find(r => !r.result && !isCurrentlyProcessing(r.requestId));
+    const nextRequest = queue.find(r => !r.result && !activeRequests.has(r.requestId));
     if (nextRequest) {
       // Adaptive Handoff: If the pool has completed a transition,
       // un-started requests adopt the new active model and speaker.
@@ -82,7 +95,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       const worker = pool.getNextAvailable();
       if (worker) {
         worker.busy = true;
-        processingRequestIds.add(nextRequest.requestId);
+        activeRequests.set(nextRequest.requestId, worker.id);
         worker.worker.postMessage({
           type: 'synthesize',
           text: nextRequest.text,
@@ -95,9 +108,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     }
   }
 
-  function isCurrentlyProcessing(requestId: string) {
-    return processingRequestIds.has(requestId);
-  }
+
 
   return {
     async init(config: FarmConfig) {
@@ -128,7 +139,23 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
 
     synthesize(text, options = {}) {
       return new Promise((resolve, reject) => {
-        const requestId = crypto.randomUUID();
+        const requestId = options.requestId || crypto.randomUUID();
+        const signal = options.signal;
+
+        if (signal?.aborted) {
+          return reject(new DOMException(signal.reason || 'Synthesis cancelled', 'AbortError'));
+        }
+
+        const farm = this;
+        function onAbort() {
+          farm.cancelSynthesis(requestId);
+          signal?.removeEventListener('abort', onAbort);
+        }
+
+        if (signal) {
+          signal.addEventListener('abort', onAbort);
+        }
+
         queue.push({
           requestId,
           text,
@@ -137,11 +164,13 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
           speakerId: options.speakerId ?? pool.getTargetSpeakerId(),
           modelId: pool.getTargetModelId() ?? undefined,
           resolve: (res) => {
-            processingRequestIds.delete(requestId);
+            activeRequests.delete(requestId);
+            if (signal) signal.removeEventListener('abort', onAbort);
             resolve(res);
           },
           reject: (err) => {
-            processingRequestIds.delete(requestId);
+            activeRequests.delete(requestId);
+            if (signal) signal.removeEventListener('abort', onAbort);
             reject(err);
           }
         });
@@ -149,17 +178,53 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       });
     },
 
+    cancelSynthesis(requestId: string) {
+      const idx = queue.findIndex(r => r.requestId === requestId);
+      if (idx === -1) return;
+
+      const req = queue[idx];
+      const workerId = activeRequests.get(requestId);
+      queue.splice(idx, 1);
+      activeRequests.delete(requestId);
+      req.reject(new DOMException('Synthesis cancelled', 'AbortError'));
+
+      // If the request was actively being processed by a worker,
+      // forcefully terminate that worker to halt the WASM execution
+      // and spawn a fresh replacement (self-healing).
+      if (workerId !== undefined) {
+        pool.replaceWorker(workerId);
+      }
+    },
+
+    cancelAllSynthesis() {
+      // Snapshot active worker IDs before clearing state
+      const activeWorkerIds = [...activeRequests.values()];
+      const allReqs = [...queue];
+      queue.length = 0;
+      activeRequests.clear();
+
+      // Reject all queued promises
+      for (const req of allReqs) {
+        req.reject(new DOMException('Synthesis cancelled', 'AbortError'));
+      }
+
+      // Forcefully terminate and replace all workers that were mid-synthesis
+      for (const workerId of activeWorkerIds) {
+        pool.replaceWorker(workerId);
+      }
+    },
+
     terminate() {
       pool.terminate();
       queue.length = 0;
-      processingRequestIds.clear();
+      activeRequests.clear();
     },
 
     async clearPiperModelCache() {
       // 1. Force release all OPFS locks by killing workers
       pool.terminate();
       queue.length = 0;
-      processingRequestIds.clear();
+      activeRequests.clear();
 
       // 2. Perform the nuke
       await resolveCacheClearing();

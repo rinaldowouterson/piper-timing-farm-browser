@@ -599,6 +599,8 @@ const provider = createPiperProvider();
 // Methods
 await provider.init(config: FarmConfig); // Serves for initial load and fast hot-swapping
 await provider.synthesize(text: string, options?: SynthesizeOptions);
+provider.cancelSynthesis(requestId: string);
+provider.cancelAllSynthesis();
 await provider.clearPiperModelCache();
 await provider.cancelDownload(modelId: string);
 await provider.clearAndRedownloadModel(modelId: string); // Purge + fresh download for corrupted models
@@ -663,6 +665,8 @@ interface SynthesizeOptions {
   speed?: number;     // Speech rate multiplier (default: 1.0)
   volume?: number;    // Volume scaling (default: 1.0)
   speakerId?: number; // Speaker selection for multi-speaker models
+  signal?: AbortSignal; // Optional: Abort controller signal for granular cancellation
+  requestId?: string; // Optional: Request tracing ID
 }
 ```
 

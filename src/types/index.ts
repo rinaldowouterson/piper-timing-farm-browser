@@ -125,6 +125,8 @@ export interface SynthesizeOptions {
   speed?: number;
   volume?: number;
   speakerId?: number;
+  signal?: AbortSignal;
+  requestId?: string;
 }
 
 export interface PiperWorkerFarm {
@@ -138,6 +140,8 @@ export interface PiperWorkerFarm {
 		text: string,
 		options?: SynthesizeOptions
 	): Promise<AudioSynthesisResult & { callbackResult?: any }>;
+	cancelSynthesis(requestId: string): void;
+	cancelAllSynthesis(): void;
 	terminate(): void;
   clearPiperModelCache(): Promise<void>;
   isInitialized(): boolean;
