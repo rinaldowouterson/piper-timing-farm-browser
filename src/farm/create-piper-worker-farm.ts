@@ -3,7 +3,8 @@ import type {
   FarmConfig, 
   AudioSynthesisResult, 
   PendingRequest, 
-  PiperWorkerMessageOut 
+  PiperWorkerMessageOut,
+  RequestStatusPayload
 } from "../types";
 import { createWorkerPool } from "./control-worker-pool";
 import { ONNX_ASSET_URLS } from "../worker/resolve-assets-onnxruntime";
@@ -22,7 +23,12 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
   const queue: PendingRequest[] = [];
   /** Maps requestId → worker id for actively processing requests. */
   const activeRequests = new Map<string, number>();
+  const listeners = new Set<(status: RequestStatusPayload) => void>();
   const pool = createWorkerPool(onReady, onResult);
+
+  function emit(payload: RequestStatusPayload) {
+    listeners.forEach(l => l(payload));
+  }
 
   function onReady(id: number) {
     // console.log(`Worker ${id} ready, checking queue...`);
@@ -43,6 +49,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       // 3. Update sequencer
       const pending = queue.find(r => r.requestId === requestId);
       if (pending) {
+        emit({ requestId, text: pending.text, state: 'completed', modelId: pool.getActiveModelId() || undefined });
         pending.result = { ...result, callbackResult };
         processQueue();
       } else {
@@ -58,6 +65,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
         const pending = queue.find(r => r.requestId === originalRequest.requestId);
         if (pending) {
           activeRequests.delete(originalRequest.requestId);
+          emit({ requestId: pending.requestId, text: pending.text, state: 'error', modelId: pool.getActiveModelId() || undefined });
           pending.reject(new Error(error));
           queue.splice(queue.indexOf(pending), 1);
         }
@@ -96,6 +104,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       if (worker) {
         worker.busy = true;
         activeRequests.set(nextRequest.requestId, worker.id);
+        emit({ requestId: nextRequest.requestId, text: nextRequest.text, state: 'processing', modelId: pool.getActiveModelId() || undefined });
         worker.worker.postMessage({
           type: 'synthesize',
           text: nextRequest.text,
@@ -174,6 +183,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
             reject(err);
           }
         });
+        emit({ requestId, text, state: 'queued', modelId: pool.getTargetModelId() || undefined });
         processQueue();
       });
     },
@@ -186,6 +196,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       const workerId = activeRequests.get(requestId);
       queue.splice(idx, 1);
       activeRequests.delete(requestId);
+      emit({ requestId, text: req.text, state: 'cancelled', modelId: pool.getActiveModelId() || undefined });
       req.reject(new DOMException('Synthesis cancelled', 'AbortError'));
 
       // If the request was actively being processed by a worker,
@@ -205,6 +216,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
 
       // Reject all queued promises
       for (const req of allReqs) {
+        emit({ requestId: req.requestId, text: req.text, state: 'cancelled', modelId: pool.getActiveModelId() || undefined });
         req.reject(new DOMException('Synthesis cancelled', 'AbortError'));
       }
 
@@ -239,6 +251,11 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
         busyWorkers: pool.getBusyCount(),
         totalWorkers: pool.getWorkerCount()
       };
+    },
+    
+    onQueueStatus(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     }
   };
 }

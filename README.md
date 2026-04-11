@@ -65,6 +65,7 @@ npx piper-farm init
 ```
 
 This CLI command:
+
 - **Intelligent Detection**: Specifically handles SvelteKit projects (`static/assets`).
 - **Universal Default**: Defaults to the modern `public/assets` convention used by **Angular (v17+)**, **Next.js**, **Vite**, and **React**.
 - Copies all required assets to the appropriate directory.
@@ -79,46 +80,50 @@ This CLI command:
 ### Tier 1: Local Assets (Recommended for Production)
 
 ```typescript
-import { createPiperProvider, PIPER_MODELS } from 'piper-timing-farm';
+import { createPiperProvider, PIPER_MODELS } from "piper-timing-farm";
 
 const provider = createPiperProvider();
 
 // Initialize with a model from the registry
-const model = PIPER_MODELS.find(m => m.id === 'en_US-bryce-medium');
+const model = PIPER_MODELS.find((m) => m.id === "en_US-bryce-medium");
 await provider.init({
   modelId: model.id,
   voiceId: model.id,
-  cpuInstances: 2,  // Number of parallel workers
+  cpuInstances: 2, // Number of parallel workers
   onProgress: (state) => {
     console.log(`Downloading: ${(state.progress * 100).toFixed(1)}%`);
-  }
+  },
 });
 
 // Synthesize text
-const result = await provider.synthesize('Hello, world!', {
-  speed: 1.0,   // Speech rate multiplier
-  volume: 0.9   // Volume scaling
+const result = await provider.synthesize("Hello, world!", {
+  speed: 1.0, // Speech rate multiplier
+  volume: 0.9, // Volume scaling
 });
 
 // Access audio and timing data
-const audioBlob = new Blob([result.audioData], { type: 'audio/wav' });
-const durations = result.metadata.durations;  // Per-phoneme timing in ms
+const audioBlob = new Blob([result.audioData], { type: "audio/wav" });
+const durations = result.metadata.durations; // Per-phoneme timing in ms
 ```
 
 ### Tier 2: CDN Assets (Zero-Config)
 
 ```typescript
-import { createPiperProvider, PIPER_MODELS, PIPER_REPO_BASE_URL } from 'piper-timing-farm/cdn';
+import {
+  createPiperProvider,
+  PIPER_MODELS,
+  PIPER_REPO_BASE_URL,
+} from "piper-timing-farm/cdn";
 
 const provider = createPiperProvider();
 await provider.init({
-  modelId: 'en_US-bryce-medium',
-  voiceId: 'en_US-bryce-medium',
-  cpuInstances: 2
+  modelId: "en_US-bryce-medium",
+  voiceId: "en_US-bryce-medium",
+  cpuInstances: 2,
 });
 
 // All assets load from jsDelivr CDN, cached to OPFS on first use
-const result = await provider.synthesize('Hello from the cloud!');
+const result = await provider.synthesize("Hello from the cloud!");
 ```
 
 ---
@@ -129,7 +134,7 @@ const result = await provider.synthesize('Hello from the cloud!');
 
 The library uses a **Worker Farm** architecture where multiple persistent Web Workers process synthesis requests in parallel:
 
-```
+```text
 Main Thread                    Worker Pool
 ┌─────────────┐               ┌─────────────────────────┐
 │   Provider  │──────────────▶│  Worker 0 (Model A)     │
@@ -143,22 +148,22 @@ Main Thread                    Worker Pool
 
 **Key Components:**
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| `create-piper-provider()` | Provider | High-level API with download management |
-| `piper-timing-farm/worker` | `processPiperSynthesis()` | Direct worker logic (Advanced) |
-| [`createPiperWorkerFarm`](src/farm/create-piper-worker-farm.ts) | Farm | Queue management and worker distribution |
-| [`process-piper-synthesis.worker`](src/worker/process-piper-synthesis.worker.ts) | Worker | ONNX inference and phonemization |
-| [`createAssetDownloadController`](src/farm/control-asset-download.ts) | Downloader | Model asset download orchestration |
+| Component                                                                        | File                      | Purpose                                  |
+| -------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------- |
+| `create-piper-provider()`                                                        | Provider                  | High-level API with download management  |
+| `piper-timing-farm/worker`                                                       | `processPiperSynthesis()` | Direct worker logic (Advanced)           |
+| [`createPiperWorkerFarm`](src/farm/create-piper-worker-farm.ts)                  | Farm                      | Queue management and worker distribution |
+| [`process-piper-synthesis.worker`](src/worker/process-piper-synthesis.worker.ts) | Worker                    | ONNX inference and phonemization         |
+| [`createAssetDownloadController`](src/farm/control-asset-download.ts)            | Downloader                | Model asset download orchestration       |
 
 ---
 
 ## Entry Points
 
-| Entry | Import Path | Asset Source | Use Case |
-|-------|-------------|--------------|----------|
-| **Tier 1** | `'piper-timing-farm'` | Local `/assets/` | Production, offline apps |
-| **Tier 2** | `'piper-timing-farm/cdn'` | jsDelivr CDN | Prototyping, no setup |
+| Entry      | Import Path               | Asset Source     | Use Case                 |
+| ---------- | ------------------------- | ---------------- | ------------------------ |
+| **Tier 1** | `'piper-timing-farm'`     | Local `/assets/` | Production, offline apps |
+| **Tier 2** | `'piper-timing-farm/cdn'` | jsDelivr CDN     | Prototyping, no setup    |
 
 ### Tier 1: Local Assets
 
@@ -175,10 +180,10 @@ All assets are resolved from **jsDelivr CDN**.
 
 ```typescript
 // Piper phonemizer
-'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/'
+"https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/";
 
 // ONNX Runtime
-'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/'
+"https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
 ```
 
 **OPFS caching ensures assets are only downloaded once**, regardless of entry point.
@@ -220,7 +225,9 @@ function processQueue() {
   }
 
   // 2. Assign pending requests to idle workers
-  const nextRequest = queue.find(r => !r.result && !isCurrentlyProcessing(r.requestId));
+  const nextRequest = queue.find(
+    (r) => !r.result && !isCurrentlyProcessing(r.requestId),
+  );
   if (nextRequest) {
     // ... Adaptive handoff logic (if transitioning) ...
 
@@ -229,12 +236,12 @@ function processQueue() {
       worker.busy = true;
       processingRequestIds.add(nextRequest.requestId);
       worker.worker.postMessage({
-        type: 'synthesize',
+        type: "synthesize",
         text: nextRequest.text,
         requestId: nextRequest.requestId,
         speed: nextRequest.speed,
         volume: nextRequest.volume,
-        speakerId: nextRequest.speakerId
+        speakerId: nextRequest.speakerId,
       });
     }
   }
@@ -258,7 +265,7 @@ When `provider.init({ modelId: 'model-c' })` is called:
 
 **FIFO Ordering Example:**
 
-```
+```text
 User clicks: Model A → Model B → Model C (in rapid succession)
 
 [T0] Model A starts downloading (first in queue)
@@ -272,7 +279,6 @@ User clicks: Model A → Model B → Model C (in rapid succession)
 
 > [!TIP]
 > **Skipping the Queue:** If you need a specific model immediately, cancel pending downloads with `provider.cancelDownload(modelId)` to remove them from the queue. The next model in line will then begin downloading.
-
 > [!IMPORTANT]
 > **Download ≠ Pool creation.** No WebAssembly workers are spawned during Phase 1. The download controller is purely concerned with network I/O and OPFS caching. Phase 2 only begins after the download promise resolves.
 
@@ -280,13 +286,13 @@ User clicks: Model A → Model B → Model C (in rapid succession)
 
 Only after the model files are fully cached does the library create a **Shadow Pool** — a set of new Web Workers that load the downloaded model into WebAssembly memory:
 
-1. **Stale Check** — Before touching the worker pool, the provider verifies this is still the *most recent* `init()` request. If a newer request arrived during the download, this transition is silently abandoned.
+1. **Stale Check** — Before touching the worker pool, the provider verifies this is still the _most recent_ `init()` request. If a newer request arrived during the download, this transition is silently abandoned.
 2. **Supersede** — If a previous Shadow Pool is still initializing (from an earlier `init()` that completed its download first), it is immediately aborted and its workers terminated.
 3. **Spawn** — New workers are created and begin loading the ONNX model from OPFS into WebAssembly.
 4. **Promote** — Once all shadow workers report `ready`, the shadow pool replaces the active pool atomically.
 5. **Retire** — Old workers finish their current synthesis task, then terminate.
 
-```
+```text
 [T3] Model C download complete (Phase 1 done)
      → Stale check passes (Model C is still the latest request)
      → Shadow Pool C spawned (2 workers loading WASM)
@@ -314,7 +320,7 @@ All model and WASM assets are cached in the **Origin Private File System (OPFS)*
 
 > [!IMPORTANT]
 > **SHA-256 is mandatory for integrity verification.** This prevents serving partial/corrupted files that cause `ERROR_CODE 7` (protobuf parsing failed).
-> 
+>
 > - **HuggingFace URLs**: SHA-256 is auto-fetched from the HF API — zero configuration required
 > - **Non-HuggingFace URLs**: You must provide `modelSha256` / `configSha256` in `FarmConfig`
 
@@ -325,40 +331,47 @@ export async function resolveOpfsAsset(
   url: string,
   modelId: string,
   extension: string,
-  expectedSha256?: string,  // Auto-fetched for HuggingFace URLs
-  options?: { signal?: AbortSignal; onProgress?: (downloaded: number, total: number) => void }
+  expectedSha256?: string, // Auto-fetched for HuggingFace URLs
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (downloaded: number, total: number) => void;
+  },
 ): Promise<ArrayBuffer> {
   const hfInfo = extractHFRepoPath(url);
-  
+
   // SECURITY: Auto-fetch SHA-256 from HuggingFace API if not provided
   if (!expectedSha256 && hfInfo) {
-    expectedSha256 = await fetchHFSha256(hfInfo.repo, hfInfo.revision, hfInfo.path);
+    expectedSha256 = await fetchHFSha256(
+      hfInfo.repo,
+      hfInfo.revision,
+      hfInfo.path,
+    );
   }
-  
+
   // SHA-256 is mandatory — throw if still not available
   if (!expectedSha256) {
     throw new Error(`SHA-256 hash is required for integrity verification`);
   }
-  
+
   // 1. Try OPFS with .meta marker verification (fast-path)
   const verifiedHash = await readMetaMarker(voicesDir, filename);
   if (verifiedHash === expectedSha256) {
     return await file.arrayBuffer(); // Instant load, zero hashing
   }
-  
+
   // 2. Fetch using Stream (clean download, no partial resumption)
   // 3. Write to OPFS via Stream (zero-memory-buffering)
   // 4. Verify SHA-256 and write .meta marker on success
   await verifySha256(finalBuffer, expectedSha256, url);
   await writeMetaMarker(voicesDir, filename, expectedSha256);
-  
+
   return finalBuffer;
 }
 ```
 
 **HuggingFace API Auto-Fetch Example:**
 
-```
+```text
 URL: https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/male/Bryce/en_US-bryce-medium.onnx
 
 API Call: https://huggingface.co/api/models/rinaldow/piper-onnx-durations/tree/main/english/US/male/Bryce
@@ -372,11 +385,11 @@ The `lfs.oid` field contains the SHA-256 hash — automatically extracted and us
 
 **Cache Clearing:** [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts)
 
-*Note: The high-level provider automatically terminates the internal farm first, then calls `resolveCacheClearing()`, ensuring no OPFS locks remain during the wipe.*
+_Note: The high-level provider automatically terminates the internal farm first, then calls `resolveCacheClearing()`, ensuring no OPFS locks remain during the wipe._
 
 ```typescript
-await provider.clearPiperModelCache();  // Purges all cached models
-await provider.clearAndRedownloadModel('en_US-bryce-medium');  // Force fresh download for corrupted model
+await provider.clearPiperModelCache(); // Purges all cached models
+await provider.clearAndRedownloadModel("en_US-bryce-medium"); // Force fresh download for corrupted model
 ```
 
 ---
@@ -394,18 +407,18 @@ The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manage
 
 **Download State Machine (4 States):**
 
-```
+```text
 pending → downloading → complete
               ↓
             error (OPFS purged automatically)
 ```
 
-| State | Meaning | User Action Available |
-|-------|---------|----------------------|
-| `pending` | Queued, waiting for turn | `cancelDownload()` to remove from queue |
-| `downloading` | Active transfer in progress | `cancelDownload()` to abort and purge |
-| `complete` | Files cached in OPFS, verified | `clearAndRedownloadModel()` if corrupted |
-| `error` | Download failed, OPFS cleaned | Call `init()` again to retry |
+| State         | Meaning                        | User Action Available                    |
+| ------------- | ------------------------------ | ---------------------------------------- |
+| `pending`     | Queued, waiting for turn       | `cancelDownload()` to remove from queue  |
+| `downloading` | Active transfer in progress    | `cancelDownload()` to abort and purge    |
+| `complete`    | Files cached in OPFS, verified | `clearAndRedownloadModel()` if corrupted |
+| `error`       | Download failed, OPFS cleaned  | Call `init()` again to retry             |
 
 > [!NOTE]
 > The `cancelled` state no longer exists as a separate state. When you call `cancelDownload()`, the entry is immediately removed from the registry and queue, and OPFS files are purged. This simplifies the state model and prevents stale entries from accumulating.
@@ -426,11 +439,11 @@ const state = provider.getDownloadState();
 ```typescript
 // Real-time updates for the active download — ideal for a single loading bar
 await provider.init({
-  modelId: 'en_US-bryce-medium',
-  voiceId: 'en_US-bryce-medium',
+  modelId: "en_US-bryce-medium",
+  voiceId: "en_US-bryce-medium",
   onProgress: (state) => {
     console.log(`${state.modelId}: ${(state.progress * 100).toFixed(1)}%`);
-  }
+  },
 });
 ```
 
@@ -441,11 +454,11 @@ await provider.init({
 
 ```typescript
 // Cancel a specific model: removes from queue, aborts download, purges OPFS
-await provider.cancelDownload('en_US-libritts-high');
+await provider.cancelDownload("en_US-libritts-high");
 
 // Force fresh download for a corrupted model (purge + re-download)
 // This clears the .meta marker, the .onnx file, and the .onnx.json file
-await provider.clearAndRedownloadModel('en_US-bryce-medium');
+await provider.clearAndRedownloadModel("en_US-bryce-medium");
 
 // Cancel ALL active downloads and shut down the farm
 provider.terminate();
@@ -457,10 +470,10 @@ Since downloads proceed in FIFO order, you can "prioritize" a model by canceling
 
 ```typescript
 // User wants Model C immediately, but Model A and B are queued first
-await provider.cancelDownload('en_US-model-a');
-await provider.cancelDownload('en_US-model-b');
+await provider.cancelDownload("en_US-model-a");
+await provider.cancelDownload("en_US-model-b");
 // Now Model C will start downloading immediately when requested
-await provider.init({ modelId: 'en_US-model-c', voiceId: 'en_US-model-c' });
+await provider.init({ modelId: "en_US-model-c", voiceId: "en_US-model-c" });
 ```
 
 > [!TIP]
@@ -474,29 +487,34 @@ Multi-speaker models (e.g., `en_US-libritts-high` with 904 speakers) support per
 
 ```typescript
 // Single-speaker model: speakerId always 0
-await provider.synthesize('Hello');
+await provider.synthesize("Hello");
 
 // Multi-speaker model: select speaker
-await provider.synthesize('Hello', { speakerId: 42 });
+await provider.synthesize("Hello", { speakerId: 42 });
 ```
 
 **Validation:** Invalid speaker IDs fall back to 0 with a warning:
 
 ```typescript
 // Worker logs: "speakerId 999 out of range (0-903), falling back to 0"
-await provider.synthesize('Hello', { speakerId: 999 });
+await provider.synthesize("Hello", { speakerId: 999 });
 ```
 
 **Implementation:** See `resolveSpeakerId()` in [`process-piper-synthesis.worker.ts`](src/worker/process-piper-synthesis.worker.ts).
 
 ```typescript
-function resolveSpeakerId(requested: number | undefined, config: ModelConfig): number {
+function resolveSpeakerId(
+  requested: number | undefined,
+  config: ModelConfig,
+): number {
   const speakerCount = Object.keys(config.speaker_id_map).length;
-  if (speakerCount === 0) return 0;  // Single-speaker model
-  
+  if (speakerCount === 0) return 0; // Single-speaker model
+
   const sid = requested ?? 0;
   if (sid < 0 || sid >= speakerCount) {
-    warn(`speakerId ${sid} out of range (0-${speakerCount - 1}), falling back to 0`);
+    warn(
+      `speakerId ${sid} out of range (0-${speakerCount - 1}), falling back to 0`,
+    );
     return 0;
   }
   return sid;
@@ -506,8 +524,8 @@ function resolveSpeakerId(requested: number | undefined, config: ModelConfig): n
 **Result Metadata:** The actual speaker ID used is returned in the result:
 
 ```typescript
-const result = await provider.synthesize('Hello', { speakerId: 5 });
-console.log(result.metadata.speakerId);  // 5 (or 0 if fallback)
+const result = await provider.synthesize("Hello", { speakerId: 5 });
+console.log(result.metadata.speakerId); // 5 (or 0 if fallback)
 ```
 
 ---
@@ -518,13 +536,13 @@ For lipsync/viseme applications, you can inject a callback module that runs **in
 
 ```typescript
 await provider.init({
-  modelId: 'en_US-bryce-medium',
-  voiceId: 'en_US-bryce-medium',
+  modelId: "en_US-bryce-medium",
+  voiceId: "en_US-bryce-medium",
   cpuInstances: 2,
   callbackModule: {
-    path: '/js/my-viseme-processor.js',
-    functionName: 'processVisemes'
-  }
+    path: "/js/my-viseme-processor.js",
+    functionName: "processVisemes",
+  },
 });
 ```
 
@@ -536,10 +554,10 @@ export function processVisemes(result) {
   // result.audioData - Float32Array
   // result.metadata.durations - Float32Array (per-phoneme timing in ms)
   // result.metadata.phonemes - string[] (phoneme symbols)
-  
+
   // Compute visemes from phonemes
-  const visemes = result.metadata.phonemes.map(p => phonemeToViseme(p));
-  
+  const visemes = result.metadata.phonemes.map((p) => phonemeToViseme(p));
+
   // Return is attached to synthesis result as callbackResult
   return { visemes, timestamps: computeTimestamps(result.metadata.durations) };
 }
@@ -548,7 +566,7 @@ export function processVisemes(result) {
 **Result Access:**
 
 ```typescript
-const result = await provider.synthesize('Hello');
+const result = await provider.synthesize("Hello");
 const { visemes, timestamps } = result.callbackResult;
 ```
 
@@ -556,9 +574,12 @@ const { visemes, timestamps } = result.callbackResult;
 
 ```typescript
 // Audio buffer is always transferred. Callback result buffers are detected and transferred where possible.
-postMessage({ type: 'success', result, callbackResult }, {
-  transfer: [audio.buffer, ...collectTransferables(callbackResult)]
-});
+postMessage(
+  { type: "success", result, callbackResult },
+  {
+    transfer: [audio.buffer, ...collectTransferables(callbackResult)],
+  },
+);
 ```
 
 ---
@@ -575,11 +596,11 @@ For power users building custom orchestration, the core synthesis worker logic i
 
 ```typescript
 // Define your own worker or use the built-in one
-import { processPiperSynthesis } from 'piper-timing-farm/worker';
+import { processPiperSynthesis } from "piper-timing-farm/worker";
 
 self.onmessage = async (e) => {
   const { type, text, requestId, speed, volume, speakerId } = e.data;
-  if (type === 'synthesize') {
+  if (type === "synthesize") {
     await processPiperSynthesis(text, requestId, { speed, volume, speakerId });
   }
 };
@@ -590,8 +611,6 @@ self.onmessage = async (e) => {
 ### `createPiperProvider()`
 
 High-level API with download management and model switching. You switch models efficiently by simply calling `provider.init()` again with the new target model ID; it will transparently orchestrate background download and shadow pool handoff.
-
-
 
 ```typescript
 const provider = createPiperProvider();
@@ -639,19 +658,20 @@ farm.metrics: { queueLength, busyWorkers, totalWorkers };
 
 ```typescript
 interface FarmConfig {
-  voiceId: string;            // Voice identifier (usually matches modelId)
-  modelId: string;            // Model identifier (e.g., 'en_US-bryce-medium')
-  cpuInstances?: number;      // Number of parallel workers (default: 2)
-  modelUrls?: {               // Optional: Custom model URLs
+  voiceId: string; // Voice identifier (usually matches modelId)
+  modelId: string; // Model identifier (e.g., 'en_US-bryce-medium')
+  cpuInstances?: number; // Number of parallel workers (default: 2)
+  modelUrls?: {
+    // Optional: Custom model URLs
     onnx: string;
     config: string;
   };
   onnxRuntimePaths?: OnnxRuntimePaths;
   piperPaths?: PiperPaths;
   callbackModule?: CallbackModuleConfig;
-  modelSha256?: string;       // Optional: SHA-256 for model integrity
-  configSha256?: string;      // Optional: SHA-256 for config integrity
-  onProgress?: (state: DownloadState) => void;  // Optional: Download progress callback
+  modelSha256?: string; // Optional: SHA-256 for model integrity
+  configSha256?: string; // Optional: SHA-256 for config integrity
+  onProgress?: (state: DownloadState) => void; // Optional: Download progress callback
 }
 ```
 
@@ -662,8 +682,8 @@ interface FarmConfig {
 
 ```typescript
 interface SynthesizeOptions {
-  speed?: number;     // Speech rate multiplier (default: 1.0)
-  volume?: number;    // Volume scaling (default: 1.0)
+  speed?: number; // Speech rate multiplier (default: 1.0)
+  volume?: number; // Volume scaling (default: 1.0)
   speakerId?: number; // Speaker selection for multi-speaker models
   signal?: AbortSignal; // Optional: Abort controller signal for granular cancellation
   requestId?: string; // Optional: Request tracing ID
@@ -674,9 +694,9 @@ interface SynthesizeOptions {
 
 ```typescript
 interface OnnxRuntimePaths {
-  wasm: string;       // Path to the WASM binaries folder
-  mjs: string;        // Path to ort.wasm.min.mjs
-  mjsHelper: string;  // Path to ort-wasm-simd-threaded.mjs
+  wasm: string; // Path to the WASM binaries folder
+  mjs: string; // Path to ort.wasm.min.mjs
+  mjsHelper: string; // Path to ort-wasm-simd-threaded.mjs
 }
 ```
 
@@ -684,9 +704,9 @@ interface OnnxRuntimePaths {
 
 ```typescript
 interface PiperPaths {
-  piperWasm: string;  // Path to piper_phonemize.wasm
-  piperJs: string;    // Path to piper_phonemize.js
-  piperData: string;  // Path to piper_phonemize.data
+  piperWasm: string; // Path to piper_phonemize.wasm
+  piperJs: string; // Path to piper_phonemize.js
+  piperData: string; // Path to piper_phonemize.data
 }
 ```
 
@@ -694,24 +714,24 @@ interface PiperPaths {
 
 ```typescript
 interface AudioSynthesisResult {
-  audioData: Float32Array;    // Raw audio samples
-  sampleRate: number;         // Audio sample rate (e.g., 22050)
-  durationMs: number;         // Total audio duration in milliseconds
+  audioData: Float32Array; // Raw audio samples
+  sampleRate: number; // Audio sample rate (e.g., 22050)
+  durationMs: number; // Total audio duration in milliseconds
   metadata: PiperMetadata & {
-    generationTimeMs?: number;  // Synthesis processing time
-    speakerId?: number;         // Speaker ID used (after validation)
+    generationTimeMs?: number; // Synthesis processing time
+    speakerId?: number; // Speaker ID used (after validation)
   };
   // Note: the return type is an intersection: `{ ... } & { callbackResult?: any }`
 }
 
 interface PiperMetadata {
-  modelId?: string;           // Model ID used for this synthesis
-  phonemeIds: number[];       // Phoneme ID sequence
-  phonemes?: string[];        // Phoneme symbol sequence
-  durations?: Float32Array;   // Per-phoneme timing in ms
+  modelId?: string; // Model ID used for this synthesis
+  phonemeIds: number[]; // Phoneme ID sequence
+  phonemes?: string[]; // Phoneme symbol sequence
+  durations?: Float32Array; // Per-phoneme timing in ms
   totalAudioDurationMs: number;
   sampleRate: number;
-  hopSize: number;            // VITS hop size (256)
+  hopSize: number; // VITS hop size (256)
 }
 ```
 
@@ -725,9 +745,9 @@ Provisions WASM and binary assets to your project's static directory.
 
 **Framework Detection:**
 
-| Framework | Detection Strategy | Default Target |
-|-----------|---------------|----------------|
-| SvelteKit | Detects `svelte.config.js` | `static/assets` |
+| Framework      | Detection Strategy                          | Default Target  |
+| -------------- | ------------------------------------------- | --------------- |
+| SvelteKit      | Detects `svelte.config.js`                  | `static/assets` |
 | **All Others** | Universal Fallback (Angular, Next.js, etc.) | `public/assets` |
 
 **Custom Target Path:**
@@ -740,20 +760,20 @@ npx piper-farm init ./public/custom-wasm-folder
 
 > [!IMPORTANT]
 > **Asset Path Defaults:** While the CLI allows you to provision assets to any folder, the library **defaults** to looking for them in the `/assets/` subfolder at runtime (e.g., `yourdomain.com/assets/piper_phonemize.js`).
-> 
+>
 > You can override these defaults during initialization without editing the source code:
-> 
+>
 > ```typescript
 > await provider.init({
 >   // ...
 >   piperPaths: {
->     piperWasm: '/custom/piper_phonemize.wasm',
->     piperData: '/custom/piper_phonemize.data',
->     piperJs:   '/custom/piper_phonemize.js'
->   }
+>     piperWasm: "/custom/piper_phonemize.wasm",
+>     piperData: "/custom/piper_phonemize.data",
+>     piperJs: "/custom/piper_phonemize.js",
+>   },
 > });
 > ```
-> 
+>
 > **Note on Extensions:** The library source code is TypeScript (`.ts`), but it expects the compiled/binary assets (`.js` glue code and `.wasm` engines) to be present in your static folder. This ensures compatibility with all modern bundlers and build processes.
 
 **Fail-Fast Security:**
@@ -768,14 +788,14 @@ npx piper-farm init
 
 **Assets Provisioned:**
 
-| File | Size | Purpose |
-|------|------|---------|
-| `piper_phonemize.wasm` | ~620KB | Piper phonemization engine |
-| `piper_phonemize.data` | ~17MB | eSpeak-ng language data |
-| `piper_phonemize.js` | ~118KB | Emscripten glue code |
-| `ort.wasm.min.mjs` | ~50KB | ONNX Runtime minimal module |
-| `ort-wasm-simd-threaded.mjs` | ~24KB | ONNX Runtime WASM (SIMD+threads) glue |
-| `ort-wasm-simd-threaded.wasm` | ~12MB | ONNX Runtime WASM engine binary |
+| File                          | Size   | Purpose                               |
+| ----------------------------- | ------ | ------------------------------------- |
+| `piper_phonemize.wasm`        | ~620KB | Piper phonemization engine            |
+| `piper_phonemize.data`        | ~17MB  | eSpeak-ng language data               |
+| `piper_phonemize.js`          | ~118KB | Emscripten glue code                  |
+| `ort.wasm.min.mjs`            | ~50KB  | ONNX Runtime minimal module           |
+| `ort-wasm-simd-threaded.mjs`  | ~24KB  | ONNX Runtime WASM (SIMD+threads) glue |
+| `ort-wasm-simd-threaded.wasm` | ~12MB  | ONNX Runtime WASM engine binary       |
 
 ---
 
@@ -784,26 +804,26 @@ npx piper-farm init
 The [`PIPER_MODELS`](src/expose-piper-models.ts) export provides pre-configured model definitions with SHA-256 hashes for integrity verification:
 
 ```typescript
-import { PIPER_MODELS, PIPER_REPO_BASE_URL } from 'piper-timing-farm';
+import { PIPER_MODELS, PIPER_REPO_BASE_URL } from "piper-timing-farm";
 
 // Find a model
-const model = PIPER_MODELS.find(m => m.id === 'en_US-bryce-medium');
+const model = PIPER_MODELS.find((m) => m.id === "en_US-bryce-medium");
 
 // Model structure
 interface PiperModelDefinition {
-  id: string;              // 'en_US-bryce-medium'
-  name: string;            // 'Bryce'
-  language: string;        // 'en'
-  country: string;         // 'US'
-  gender?: 'male' | 'female' | 'multi';
-  quality: 'low' | 'medium' | 'high';
-  modelUrl: string;        // HuggingFace URL
-  configUrl: string;       // HuggingFace URL
-  numSpeakers: number;     // 1 for single-speaker
+  id: string; // 'en_US-bryce-medium'
+  name: string; // 'Bryce'
+  language: string; // 'en'
+  country: string; // 'US'
+  gender?: "male" | "female" | "multi";
+  quality: "low" | "medium" | "high";
+  modelUrl: string; // HuggingFace URL
+  configUrl: string; // HuggingFace URL
+  numSpeakers: number; // 1 for single-speaker
   isMultiSpeaker: boolean; // Derived from numSpeakers
-  speakerId: number;       // Default speaker (0)
-  modelSha256?: string;    // SHA-256 hash for integrity (auto-fetched from HF API if missing)
-  configSha256?: string;   // SHA-256 hash for integrity (auto-fetched from HF API if missing)
+  speakerId: number; // Default speaker (0)
+  modelSha256?: string; // SHA-256 hash for integrity (auto-fetched from HF API if missing)
+  configSha256?: string; // SHA-256 hash for integrity (auto-fetched from HF API if missing)
 }
 ```
 
@@ -814,23 +834,23 @@ interface PiperModelDefinition {
 
 **Available Models & Licenses:**
 
-| Language | Model Name | Quality | License | Dataset / Training info |
-|---|---|---|---|---|
-| English (en_US) | Bryce | medium | Public Domain | Recorded by Bryce Beattie |
-| English (en_US) | Ljspeech | high | Public Domain | LJSpeech dataset |
-| English (en_US) | Kristin | medium | CC-BY 4.0 | Recorded by Kristin (LibriVox) |
-| English (en_US) | Arctic | medium | Public Domain | CMU Arctic dataset |
-| English (en_GB) | Cori | medium | CC-BY 4.0 | Recorded by Cori |
-| English (en_US) | Libritts | high | CC-BY 4.0 | LibriTTS dataset (904 speakers) |
-| Dutch (nl_NL) | Alex | medium | CC0 | Finetuned from rdh (Safe) |
-| Dutch (nl_BE) | Rdh | medium | CC0 | Trained from scratch |
-| Swedish (sv_SE) | Alma | medium | CC-BY 4.0 | NST Swedish TTS dataset |
-| Swedish (sv_SE) | Nst | medium | CC0 | Trained from scratch (KBLab) |
-| Ukrainian (uk_UA) | UkrainianTts | medium | CC-BY 4.0 | Multi-speaker Ukrainian |
+| Language          | Model Name   | Quality | License       | Dataset / Training info         |
+| ----------------- | ------------ | ------- | ------------- | ------------------------------- |
+| English (en_US)   | Bryce        | medium  | Public Domain | Recorded by Bryce Beattie       |
+| English (en_US)   | Ljspeech     | high    | Public Domain | LJSpeech dataset                |
+| English (en_US)   | Kristin      | medium  | CC-BY 4.0     | Recorded by Kristin (LibriVox)  |
+| English (en_US)   | Arctic       | medium  | Public Domain | CMU Arctic dataset              |
+| English (en_GB)   | Cori         | medium  | CC-BY 4.0     | Recorded by Cori                |
+| English (en_US)   | Libritts     | high    | CC-BY 4.0     | LibriTTS dataset (904 speakers) |
+| Dutch (nl_NL)     | Alex         | medium  | CC0           | Finetuned from rdh (Safe)       |
+| Dutch (nl_BE)     | Rdh          | medium  | CC0           | Trained from scratch            |
+| Swedish (sv_SE)   | Alma         | medium  | CC-BY 4.0     | NST Swedish TTS dataset         |
+| Swedish (sv_SE)   | Nst          | medium  | CC0           | Trained from scratch (KBLab)    |
+| Ukrainian (uk_UA) | UkrainianTts | medium  | CC-BY 4.0     | Multi-speaker Ukrainian         |
 
 **Model Source:** HuggingFace repository at `PIPER_REPO_BASE_URL`:
 
-```
+```text
 https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/
 ```
 
@@ -844,12 +864,12 @@ The `audioData` buffer (`Float32Array`) is always transferred via `postMessage` 
 
 For worker-thread callback results, the library recursively walks the return value and transfers any `ArrayBuffer` or `TypedArray` buffers it finds. The following types are detected:
 
-| Type | Transferred | Example |
-|------|-------------|---------|
-| `ArrayBuffer` | ✅ Zero-copy | Raw binary data |
-| `Float32Array` | ✅ Zero-copy | Audio samples, timing data |
+| Type                              | Transferred  | Example                                   |
+| --------------------------------- | ------------ | ----------------------------------------- |
+| `ArrayBuffer`                     | ✅ Zero-copy | Raw binary data                           |
+| `Float32Array`                    | ✅ Zero-copy | Audio samples, timing data                |
 | `Uint16Array`, `Int32Array`, etc. | ✅ Zero-copy | Any TypedArray backed by an `ArrayBuffer` |
-| Plain objects, strings, numbers | ❌ Copied | Serialized via structured clone |
+| Plain objects, strings, numbers   | ❌ Copied    | Serialized via structured clone           |
 
 **Note:** Transfer performance depends on what your callback returns. Returning `TypedArray` objects enables zero-copy transfer. Returning plain objects or deeply nested non-buffer data will fall back to the browser's standard structured clone algorithm.
 
@@ -861,7 +881,7 @@ Each worker uses `ortInstance.env.wasm.numThreads = 1` to prevent internal ONNX 
 
 ```typescript
 // process-piper-synthesis.worker.ts
-ortInstance.env.wasm.numThreads = 1;  // Enforce single thread per worker
+ortInstance.env.wasm.numThreads = 1; // Enforce single thread per worker
 ```
 
 **Rationale:** A 4-worker pool with each worker using 4 internal threads would spawn 16 threads, causing context-switch overhead. Single-threaded workers with external load balancing is more efficient.
@@ -873,7 +893,7 @@ Cached assets bypass network entirely:
 ```typescript
 // resolve-opfs-asset.ts
 if (file.size > 0) {
-  return await file.arrayBuffer();  // Fast-path: Trust the cache
+  return await file.arrayBuffer(); // Fast-path: Trust the cache
 }
 ```
 
@@ -894,11 +914,11 @@ To prevent Out-of-Memory (OOM) crashes on low-end devices, the library avoids bu
 
 ### Required APIs
 
-| API | Purpose | Browser Support |
-|-----|---------|-----------------|
-| Web Workers | Parallel synthesis | All modern browsers |
-| OPFS | Asset caching | Chrome 86+, Firefox 111+, Safari 15.2+ |
-| SHA-256 (Web Crypto) | Integrity verification | All modern browsers |
+| API                  | Purpose                | Browser Support                        |
+| -------------------- | ---------------------- | -------------------------------------- |
+| Web Workers          | Parallel synthesis     | All modern browsers                    |
+| OPFS                 | Asset caching          | Chrome 86+, Firefox 111+, Safari 15.2+ |
+| SHA-256 (Web Crypto) | Integrity verification | All modern browsers                    |
 
 **Note:** The library enforces single-threaded workers (`numThreads = 1`), which works out-of-the-box in all modern browsers without special headers or `SharedArrayBuffer` requirements.
 
@@ -917,7 +937,7 @@ import type {
   PiperPaths,
   OnnxRuntimePaths,
   CallbackModuleConfig,
-  DownloadState,        // state: 'pending' | 'downloading' | 'complete' | 'error'
+  DownloadState, // state: 'pending' | 'downloading' | 'complete' | 'error'
   DownloadController,
   PiperMetadata,
   SynthesizeOptions,
@@ -925,14 +945,14 @@ import type {
   WorkerState,
   PiperWorkerMessageIn,
   PiperWorkerMessageOut,
-  PiperModelConfig
-} from 'piper-timing-farm';
+  PiperModelConfig,
+} from "piper-timing-farm";
 
-import { 
-  type PiperModelDefinition,  // Re-exported from expose-piper-models
-  PIPER_MODELS, 
-  PIPER_REPO_BASE_URL 
-} from 'piper-timing-farm';
+import {
+  type PiperModelDefinition, // Re-exported from expose-piper-models
+  PIPER_MODELS,
+  PIPER_REPO_BASE_URL,
+} from "piper-timing-farm";
 ```
 
 See [`src/types/index.ts`](src/types/index.ts) for complete definitions.

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createWorkerPool } from '../../src/farm/control-worker-pool';
-import type { PiperWorkerConfig, WorkerState } from '../../src/types';
+import { createPiperWorkerFarm } from '../../src/farm/create-piper-worker-farm';
+import type { PiperWorkerConfig, WorkerState, RequestStatusPayload } from '../../src/types';
 
 /**
  * Worker Pool Edge Cases Test
@@ -330,6 +331,61 @@ describe('Worker Pool Edge Cases', () => {
             pool.replaceWorker(0);
 
             expect(pool.getWorkerCount()).toBe(0);
+        });
+    });
+
+    describe('Queue Observability', () => {
+        it('should strictly emit queued -> processing -> completed events', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const events: RequestStatusPayload[] = [];
+            
+            const farm = createPiperWorkerFarm();
+            farm.onQueueStatus(status => events.push(status));
+
+            await farm.init(baseConfig);
+            
+            // Wait for workers to be ready
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
+            const promise = farm.synthesize('hello world');
+            
+            // queued and processing happen synchronously in the synthesize call
+            expect(events.length).toBe(2);
+            expect(events[0]).toMatchObject({ text: 'hello world', state: 'queued' });
+            expect(events[1]).toMatchObject({ text: 'hello world', state: 'processing' });
+            
+            await promise;
+            
+            // completed happens asynchronously
+            expect(events.length).toBe(3);
+            expect(events[2]).toMatchObject({ text: 'hello world', state: 'completed' });
+            
+            farm.terminate();
+            spy.mockRestore();
+        });
+
+        it('should emit cancelled event upon cancelSynthesis', async () => {
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const events: RequestStatusPayload[] = [];
+            
+            const farm = createPiperWorkerFarm();
+            farm.onQueueStatus(status => events.push(status));
+
+            await farm.init(baseConfig);
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
+            const promise = farm.synthesize('hello cancellation', { requestId: 'cancel-test' });
+            
+            farm.cancelSynthesis('cancel-test');
+            
+            try { await promise; } catch (e) {}
+            
+            // queued -> processing -> cancelled (since the worker was fast enough to pick it up)
+            expect(events.length).toBe(3);
+            expect(events[2]).toMatchObject({ requestId: 'cancel-test', state: 'cancelled' });
+            
+            farm.terminate();
+            spy.mockRestore();
         });
     });
 });

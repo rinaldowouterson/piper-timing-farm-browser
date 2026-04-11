@@ -14,6 +14,15 @@ export interface PiperMetadata {
   modelId?: string;
 }
 
+export type RequestState = 'queued' | 'processing' | 'completed' | 'cancelled' | 'error';
+
+export interface RequestStatusPayload {
+  requestId: string;
+  text: string;
+  state: RequestState;
+  modelId?: string;
+}
+
 export interface AudioSynthesisResult {
 	audioData: Float32Array;
 	sampleRate: number;
@@ -152,6 +161,7 @@ export interface PiperWorkerFarm {
 		busyWorkers: number;
 		totalWorkers: number;
 	};
+	onQueueStatus(listener: (status: RequestStatusPayload) => void): () => void;
 }
 
 export type PiperWorkerMessageIn =

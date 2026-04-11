@@ -2,7 +2,8 @@ import type {
   PiperWorkerFarm, 
   FarmConfig, 
   AudioSynthesisResult,
-  DownloadState
+  DownloadState,
+  RequestStatusPayload
 } from "../types";
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
@@ -33,6 +34,8 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   let loadingModelId: string | null = null;
   let lastTransitionId = 0;
   const downloader = createAssetDownloadController();
+  const queueListeners = new Set<(status: RequestStatusPayload) => void>();
+  let farmUnsubscribe: (() => void) | null = null;
 
   return {
     async init(config: FarmConfig) {
@@ -82,6 +85,11 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       // 2. Initial Setup or Handoff
       if (!farm) {
         farm = createPiperWorkerFarm();
+        
+        farmUnsubscribe = farm.onQueueStatus((status) => {
+          queueListeners.forEach(l => l(status));
+        });
+
         await farm.init({
           ...config,
           onnxRuntimePaths: config.onnxRuntimePaths || FULL_ASSET_URLS.onnxRuntime,
@@ -168,6 +176,13 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
     /** Returns a snapshot of every model's download lifecycle. */
     getDownloadState() {
       return downloader.getState();
+    },
+
+    onQueueStatus(listener) {
+      queueListeners.add(listener);
+      return () => {
+        queueListeners.delete(listener);
+      };
     },
 
     get metrics() {
