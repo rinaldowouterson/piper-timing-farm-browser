@@ -174,6 +174,7 @@ export async function processPiperSynthesis(
   const generationTimeMs = performance.now() - start;
 
   const result: AudioSynthesisResult = {
+    requestId,
     audioData: audio,
     sampleRate: modelConfig.audio.sample_rate,
     durationMs,

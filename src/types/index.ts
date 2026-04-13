@@ -24,6 +24,7 @@ export interface RequestStatusPayload {
 }
 
 export interface AudioSynthesisResult {
+  requestId: string;
 	audioData: Float32Array;
 	sampleRate: number;
 	durationMs: number;
@@ -144,7 +145,7 @@ export interface PiperWorkerFarm {
    * Updates the farm with a new model configuration without 
    * destroying workers or clearing the queue. 
    */
-  reinit(config: Pick<FarmConfig, 'voiceId' | 'modelId' | 'modelUrls'>): Promise<void>;
+  reinit(config: Pick<FarmConfig, 'voiceId' | 'modelId' | 'modelUrls' | 'callbackModule'>): Promise<void>;
 	synthesize(
 		text: string,
 		options?: SynthesizeOptions

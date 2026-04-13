@@ -63,13 +63,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       if (!onnxUrl || !jsonUrl) throw new Error(`Model urls missing for ${modelId}`);
 
       loadingModelId = modelId;
-
-      // LOCK the farm if we are switching models to ensure subsequent requests 
-      // are queued for the NEW model that is currently being provisioned.
-      if (farm && activeModelId !== modelId) {
-        farm.prepareTransition(modelId);
-      }
-
+      
       // 1. Download & Verify via the download controller
       try {
         await downloader.request(
@@ -92,6 +86,12 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       // STALE CHECK: A newer init() was called during download — abandon this one
       if (transitionId !== lastTransitionId) return;
 
+      // LOCK the farm if we are switching models to ensure subsequent requests 
+      // are queued for the NEW model that is currently being provisioned.
+      if (farm && activeModelId !== modelId) {
+        farm.prepareTransition(modelId);
+      }
+
       // 2. Initial Setup or Handoff
       if (!farm) {
         farm = createPiperWorkerFarm();
@@ -109,7 +109,8 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
           await farm.reinit({ 
             modelId, 
             voiceId: config.voiceId,
-            modelUrls: config.modelUrls
+            modelUrls: config.modelUrls,
+            callbackModule: config.callbackModule
           });
         } catch (err) {
           // Transition was superseded by a newer reinit() — silently return

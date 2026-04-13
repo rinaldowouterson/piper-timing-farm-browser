@@ -50,7 +50,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       const pending = queue.find(r => r.requestId === requestId);
       if (pending) {
         emit({ requestId, text: pending.text, state: 'completed', modelId: pool.getActiveModelId() || undefined });
-        pending.result = { ...result, callbackResult };
+        pending.result = { ...result, requestId, callbackResult };
         processQueue();
       } else {
         // Request was logically aborted and removed from queue, but worker is now free.
@@ -81,39 +81,31 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       first.resolve(first.result as any);
     }
 
-    // 2. Assign pending requests to idle workers
-    const nextRequest = queue.find(r => !r.result && !activeRequests.has(r.requestId));
-    if (nextRequest) {
-      // Adaptive Handoff: If the pool has completed a transition,
-      // un-started requests adopt the new active model and speaker.
-      const activeModel = pool.getActiveModelId();
-      const targetModel = pool.getTargetModelId();
-      const isTransitioning = targetModel !== activeModel;
+    // 2. Sample current pool state
+    const activeModel = pool.getActiveModelId();
+    const isTransitioning = pool.getTargetModelId() !== activeModel;
 
-      if (nextRequest.modelId && nextRequest.modelId !== activeModel) {
-        if (isTransitioning) {
-          // Pool is still transitioning — wait, don't block
-          return;
-        }
-        // Transition complete: adopt the new active config
-        nextRequest.modelId = activeModel ?? undefined;
-        nextRequest.speakerId = pool.getTargetSpeakerId();
-      }
+    // 3. Find the first task the CURRENT pool is capable of handling
+    const nextRequest = queue.find(r => 
+      !r.result && 
+      !activeRequests.has(r.requestId) && 
+      (!isTransitioning || r.modelId === activeModel)
+    );
 
-      const worker = pool.getNextAvailable();
-      if (worker) {
-        worker.busy = true;
-        activeRequests.set(nextRequest.requestId, worker.id);
-        emit({ requestId: nextRequest.requestId, text: nextRequest.text, state: 'processing', modelId: pool.getActiveModelId() || undefined });
-        worker.worker.postMessage({
-          type: 'synthesize',
-          text: nextRequest.text,
-          requestId: nextRequest.requestId,
-          speed: nextRequest.speed,
-          volume: nextRequest.volume,
-          speakerId: nextRequest.speakerId
-        });
-      }
+    const worker = pool.getNextAvailable();
+    if (nextRequest && worker) {
+      worker.busy = true;
+      activeRequests.set(nextRequest.requestId, worker.id);
+      emit({ requestId: nextRequest.requestId, text: nextRequest.text, state: 'processing', modelId: activeModel || undefined });
+      
+      worker.worker.postMessage({
+        type: 'synthesize',
+        text: nextRequest.text,
+        requestId: nextRequest.requestId,
+        speed: nextRequest.speed,
+        volume: nextRequest.volume,
+        speakerId: nextRequest.speakerId
+      });
     }
   }
 

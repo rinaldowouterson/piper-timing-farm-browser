@@ -117,15 +117,16 @@ await provider.init({
   },
 });
 
-// Synthesize text
+// Synthesize text with optional correlation ID
 const result = await provider.synthesize("Hello, world!", {
-  speed: 1.0,  // Speech rate
-  volume: 0.9, // Volume
+  requestId: "msg-001", // Optional: Pass your own ID for correlation
+  speed: 1.0, 
+  volume: 0.9,
 });
 
-// Access zero-copy audio and timing data
-const audioBlob = new Blob([result.audioData], { type: "audio/wav" });
-const durations = result.metadata.durations; // Per-phoneme timing in ms
+// The library always returns the ID (even if it generated it for you)
+console.log(result.requestId); // "msg-001"
+const durations = result.metadata.durations; 
 ```
 
 ---
@@ -199,7 +200,22 @@ Queue: [
 // 3. 'c' completes → drain 'c'
 ```
 
-**Implementation:** See `processQueue()` in [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts) for the exact draining behavior.
+**Implementation:** See `processQueue()` in [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts).
+
+---
+
+### Flexible Correlation (Traceability)
+
+The library implements a **Flexible Correlation** pattern designed for high-performance React/Vue/Svelte frontends where optimistic UI updates and cancellation are critical.
+
+1.  **Consumer Option**: You can pass your own `requestId` (e.g., a Database UUID or ULID) to `synthesize()`.
+2.  **Library Enforcement**: If no ID is provided, the library generates a `crypto.randomUUID()` internally.
+3.  **Implicit Return**: Every `AudioSynthesisResult` resolution **guarantees** the `requestId` is returned.
+4.  **Synchronous Transparency**: A `queued` status event is emitted **synchronously** during the `synthesize()` call, allowing you to map the ID to your UI before the promise ever resolves.
+
+**Standard vs. Elite Correlation:**
+- **Standard**: Library generates an ID, user has to wait for the Promise to know what it was.
+- **Elite (Piper Timing Farm)**: User provides the ID, library accepts it, resolves it, and emits it. This enables perfect **Correlation-at-Source**.
 
 ```typescript
 function processQueue() {
