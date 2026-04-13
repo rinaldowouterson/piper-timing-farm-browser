@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import type { OrtInferenceSession } from "../types/ort-minimal";
+import type { OrtInferenceSession, OrtModule } from "../types/ort-minimal";
 import type { 
   PiperWorkerMessageIn, 
   PiperWorkerMessageOut, 
@@ -17,7 +17,7 @@ declare const self: DedicatedWorkerGlobalScope;
 
 // --- State ---
 let ortSession: OrtInferenceSession | null = null;
-let ortInstance: any = null;
+let ortInstance: OrtModule | null = null;
 let phonemizerModule: PiperPhonemizerModule | null = null;
 let modelConfig: ModelConfig | null = null;
 let instanceId = -1;
@@ -121,7 +121,7 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     const ortModule = await import(/* @vite-ignore */ onnxRuntimePaths.mjs);
     ortInstance = ortModule.default || ortModule;
     
-    if (!ortInstance.env) {
+    if (!ortInstance || !ortInstance.env) {
       throw new Error("Invalid ONNX Runtime module: 'env' is missing. Check if the .mjs URL is correct.");
     }
 
@@ -170,7 +170,7 @@ export async function processPiperSynthesis(
   requestId: string, 
   options: { speed?: number; volume?: number; speakerId?: number }
 ) {
-  if (!ortSession || !phonemizerModule || !modelConfig) {
+  if (!ortSession || !ortInstance || !phonemizerModule || !modelConfig) {
     throw new Error("Worker not initialized");
   }
 
@@ -288,17 +288,17 @@ function phonemize(text: string, voice: string) {
   throw new Error("Phonemization failed");
 }
 
-async function runInference(ortInstance: any, phonemeIds: number[], options: any, speakerId: number) {
+async function runInference(ortInstance: OrtModule, phonemeIds: number[], options: any, speakerId: number) {
   const { noise_scale, length_scale, noise_w } = modelConfig!.inference;
   
   const feeds: Record<string, any> = {
     input: new ortInstance.Tensor("int64", BigInt64Array.from(phonemeIds.map(BigInt)), [1, phonemeIds.length]),
     input_lengths: new ortInstance.Tensor("int64", BigInt64Array.from([BigInt(phonemeIds.length)])),
-    scales: new ortInstance.Tensor("float32", [
+    scales: new ortInstance.Tensor("float32", new Float32Array([
       noise_scale, 
       options.speed ? length_scale / options.speed : length_scale, 
       noise_w
-    ])
+    ]))
   };
 
   if (Object.keys(modelConfig!.speaker_id_map).length > 0) {

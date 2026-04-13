@@ -13,6 +13,33 @@ import type {
  * Ensures that if a worker fails, it's restarted, and manages the 
  * stateful model re-initialization.
  */
+
+function removeUndefined<T extends object>(obj: T): T {
+  const result = { ...obj };
+  Object.keys(result).forEach(key => {
+    if ((result as any)[key] === undefined) {
+      delete (result as any)[key];
+    }
+  });
+  return result;
+}
+
+function isConfigSame(a: PiperWorkerConfig, b: PiperWorkerConfig): boolean {
+  return a.modelId === b.modelId && 
+         a.voiceId === b.voiceId && 
+         JSON.stringify(a.onnxRuntimePaths) === JSON.stringify(b.onnxRuntimePaths) &&
+         JSON.stringify(a.piperPaths) === JSON.stringify(b.piperPaths) &&
+         JSON.stringify(a.callbackModule) === JSON.stringify(b.callbackModule);
+}
+
+function isSurgicalCandidate(oldConfig: PiperWorkerConfig, newConfig: PiperWorkerConfig): boolean {
+  // Candidate for surgical update if ONLY callbackModule changed
+  return oldConfig.modelId === newConfig.modelId &&
+         oldConfig.voiceId === newConfig.voiceId &&
+         JSON.stringify(oldConfig.onnxRuntimePaths) === JSON.stringify(newConfig.onnxRuntimePaths) &&
+         JSON.stringify(oldConfig.piperPaths) === JSON.stringify(newConfig.piperPaths) &&
+         JSON.stringify(oldConfig.callbackModule) !== JSON.stringify(newConfig.callbackModule);
+}
 export function createWorkerPool(
   onReady: (id: number) => void, 
   onResult: (msg: PiperWorkerMessageOut) => void,
@@ -26,45 +53,60 @@ export function createWorkerPool(
   let targetSpeakerId: number = 0;
   let currentConfig: PiperWorkerConfig | null = null;
   let pendingTransition: { abort: () => void; shadowPool: WorkerState[] } | null = null;
+  let activeInit: Promise<void> | null = null;
 
   return {
     async init(config: PiperWorkerConfig, count: number) {
-      currentConfig = config;
-      activeModelId = config.modelId;
-      targetModelId = config.modelId;
-      targetSpeakerId = 0;
-      isInitialized = true;
+      if (activeInit) return activeInit;
 
-      const initPromises = [];
-      for (let i = 0; i < count; i++) {
-        const id = nextWorkerId++;
-        const worker = createWorker(id, config, (msg) => {
-          if (msg.type === 'ready') onReady(msg.instanceId);
-          else onResult(msg);
-        }, onLog);
-        workers.push(worker);
-        initPromises.push(new Promise<void>((res, rej) => {
-          const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
-            const msg = e.data;
-            if (msg.type === 'log') return; // Logs don't trigger ready/error for init
-            if (msg.instanceId !== id) return;
-            
-            if (msg.type === 'ready') cleanup(res);
-            else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
-          };
-          const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
-          
-          const cleanup = (cb: () => void) => {
-            worker.worker.removeEventListener('message', handler);
-            worker.worker.removeEventListener('error', errHandler);
-            cb();
-          };
+      activeInit = (async () => {
+        try {
+          if (isInitialized && currentConfig && isConfigSame(currentConfig, config) && workers.length === count) {
+            return;
+          }
 
-          worker.worker.addEventListener('message', handler);
-          worker.worker.addEventListener('error', errHandler);
-        }));
-      }
-      await Promise.all(initPromises);
+          currentConfig = config;
+          activeModelId = config.modelId;
+          targetModelId = config.modelId;
+          targetSpeakerId = 0;
+          isInitialized = true;
+
+          const initPromises = [];
+          for (let i = 0; i < count; i++) {
+            const id = nextWorkerId++;
+            const worker = createWorker(id, config, (msg) => {
+              if (msg.type === 'ready') onReady(msg.instanceId);
+              else onResult(msg);
+            }, onLog);
+            workers.push(worker);
+            initPromises.push(new Promise<void>((res, rej) => {
+              const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
+                const msg = e.data;
+                if (msg.type === 'log') return;
+                if (msg.instanceId !== id) return;
+                
+                if (msg.type === 'ready') cleanup(res);
+                else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
+              };
+              const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
+              
+              const cleanup = (cb: () => void) => {
+                worker.worker.removeEventListener('message', handler);
+                worker.worker.removeEventListener('error', errHandler);
+                cb();
+              };
+
+              worker.worker.addEventListener('message', handler);
+              worker.worker.addEventListener('error', errHandler);
+            }));
+          }
+          await Promise.all(initPromises);
+        } finally {
+          activeInit = null;
+        }
+      })();
+
+      return activeInit;
     },
 
     /**
@@ -78,15 +120,55 @@ export function createWorkerPool(
      */
     async reinit(config: Partial<PiperWorkerConfig>) {
       if (!currentConfig) throw new Error("Pool not initialized");
+      
+      const normalizedPartial = removeUndefined(config);
+      const newConfig = { ...currentConfig, ...normalizedPartial } as PiperWorkerConfig;
 
-      // 1. Abort any pending transition (supersede intermediate pools)
+      // 1. Idempotency Check: Skip if requested config is identical to current
+      if (isConfigSame(currentConfig, newConfig)) {
+        targetModelId = newConfig.modelId; // Ensure target is synced
+        onLog({
+          level: 'info',
+          message: `[WorkerPool] Idempotent reinit detected for model: ${newConfig.modelId}. Skipping.`,
+          workerId: -1,
+          timestamp: Date.now()
+        });
+        return;
+      }
+
+      // 2. Abort any pending transition (supersede intermediate pools)
       if (pendingTransition) {
         pendingTransition.abort();
         pendingTransition.shadowPool.forEach(w => w.worker.terminate());
         pendingTransition = null;
       }
 
-      const newConfig = { ...currentConfig, ...config } as PiperWorkerConfig;
+      // 3. Path A: Surgical Bypass for callback-only updates
+      if (isSurgicalCandidate(currentConfig, newConfig)) {
+        onLog({
+          level: 'info',
+          message: `[WorkerPool] Choosing Path A (Surgical): Reusing workers for callback update.`,
+          workerId: -1,
+          timestamp: Date.now()
+        });
+        workers.forEach(w => {
+          w.worker.postMessage({
+            type: "load-callback",
+            modulePath: newConfig.callbackModule!.path,
+            functionName: newConfig.callbackModule!.functionName
+          });
+        });
+        currentConfig = newConfig;
+        return;
+      }
+
+      // 4. Path B: Full Hotswap (Shadow Pool) for core asset changes
+      onLog({
+        level: 'info',
+        message: `[WorkerPool] Choosing Path B (Hotswap): Configuration mismatch detected. Spawning shadow pool...`,
+        workerId: -1,
+        timestamp: Date.now()
+      });
       targetModelId = newConfig.modelId;
       const count = workers.length;
       const shadowPool: WorkerState[] = [];
@@ -98,7 +180,7 @@ export function createWorkerPool(
         shadowPool
       };
 
-      // 3. Spawn Shadow Pool
+      // Spawn Shadow Pool
       const initPromises = [];
       for (let i = 0; i < count; i++) {
         if (abortController.signal.aborted) break;
@@ -130,16 +212,16 @@ export function createWorkerPool(
         }));
       }
 
-      // 4. Wait for Shadow Pool to be READY
+      // Wait for Shadow Pool to be READY
       await Promise.all(initPromises);
 
-      // 5. Check if this transition was superseded by a newer reinit() call
+      // Check if this transition was superseded by a newer reinit() call
       if (abortController.signal.aborted) {
         shadowPool.forEach(w => w.worker.terminate());
         throw new DOMException("Transition superseded by newer request", "AbortError");
       }
 
-      // 6. Promote Shadow Pool & Retire Old Workers
+      // Promote Shadow Pool & Retire Old Workers
       pendingTransition = null;
       const oldWorkers = [...workers];
       workers = shadowPool;

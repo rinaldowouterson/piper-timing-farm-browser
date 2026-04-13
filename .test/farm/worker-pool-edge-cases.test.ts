@@ -34,7 +34,8 @@ describe('Worker Pool Edge Cases', () => {
         
         const onReady = vi.fn();
         const onResult = vi.fn();
-        const pool = createWorkerPool(onReady, onResult);
+        const onLog = vi.fn();
+        const pool = createWorkerPool(onReady, onResult, onLog);
         await pool.init(baseConfig, 2);
         
         expect(pool.getWorkerCount()).toBe(2);
@@ -57,7 +58,8 @@ describe('Worker Pool Edge Cases', () => {
         
         const onReady = vi.fn();
         const onResult = vi.fn();
-        const pool = createWorkerPool(onReady, onResult);
+        const onLog = vi.fn();
+        const pool = createWorkerPool(onReady, onResult, onLog);
         await pool.init(baseConfig, 2);
         
         // Mark a worker as busy (simulating active synthesis)
@@ -93,7 +95,8 @@ describe('Worker Pool Edge Cases', () => {
         
         const onReady = vi.fn();
         const onResult = vi.fn();
-        const pool = createWorkerPool(onReady, onResult);
+        const onLog = vi.fn();
+        const pool = createWorkerPool(onReady, onResult, onLog);
         await pool.init(baseConfig, 2);
         
         // Get a worker
@@ -119,7 +122,8 @@ describe('Worker Pool Edge Cases', () => {
         
         const onReady = vi.fn();
         const onResult = vi.fn();
-        const pool = createWorkerPool(onReady, onResult);
+        const onLog = vi.fn();
+        const pool = createWorkerPool(onReady, onResult, onLog);
         await pool.init(baseConfig, 2);
         
         // Mark all workers as transitioning
@@ -149,7 +153,8 @@ describe('Worker Pool Edge Cases', () => {
         
         const onReady = vi.fn();
         const onResult = vi.fn();
-        const pool = createWorkerPool(onReady, onResult);
+        const onLog = vi.fn();
+        const pool = createWorkerPool(onReady, onResult, onLog);
         await pool.init(baseConfig, 2);
         
         // Set target model for transition
@@ -168,7 +173,8 @@ describe('Worker Pool Edge Cases', () => {
         
         const onReady = vi.fn();
         const onResult = vi.fn();
-        const pool = createWorkerPool(onReady, onResult);
+        const onLog = vi.fn();
+        const pool = createWorkerPool(onReady, onResult, onLog);
         await pool.init(baseConfig, 2);
         
         expect(pool.getActiveModelId()).toBe('en_US-bryce-medium');
@@ -215,7 +221,8 @@ describe('Worker Pool Edge Cases', () => {
 
             const onReady = vi.fn();
             const onResult = vi.fn();
-            const pool = createWorkerPool(onReady, onResult);
+            const onLog = vi.fn();
+            const pool = createWorkerPool(onReady, onResult, onLog);
             await pool.init(baseConfig, 2);
 
             const oldWorkers = pool.getWorkers();
@@ -247,7 +254,8 @@ describe('Worker Pool Edge Cases', () => {
 
             const onReady = vi.fn();
             const onResult = vi.fn();
-            const pool = createWorkerPool(onReady, onResult);
+            const onLog = vi.fn();
+            const pool = createWorkerPool(onReady, onResult, onLog);
             await pool.init(baseConfig, 3);
 
             expect(pool.getWorkerCount()).toBe(3);
@@ -284,7 +292,8 @@ describe('Worker Pool Edge Cases', () => {
 
             const onReady = vi.fn();
             const onResult = vi.fn();
-            const pool = createWorkerPool(onReady, onResult);
+            const onLog = vi.fn();
+            const pool = createWorkerPool(onReady, onResult, onLog);
             await pool.init(baseConfig, 1);
 
             const oldId = pool.getWorkers()[0].id;
@@ -308,7 +317,8 @@ describe('Worker Pool Edge Cases', () => {
 
             const onReady = vi.fn();
             const onResult = vi.fn();
-            const pool = createWorkerPool(onReady, onResult);
+            const onLog = vi.fn();
+            const pool = createWorkerPool(onReady, onResult, onLog);
             await pool.init(baseConfig, 2);
 
             const countBefore = pool.getWorkerCount();
@@ -325,7 +335,8 @@ describe('Worker Pool Edge Cases', () => {
         it('should be a no-op before pool initialization', () => {
             const onReady = vi.fn();
             const onResult = vi.fn();
-            const pool = createWorkerPool(onReady, onResult);
+            const onLog = vi.fn();
+            const pool = createWorkerPool(onReady, onResult, onLog);
 
             // No init called — replaceWorker should silently return
             pool.replaceWorker(0);

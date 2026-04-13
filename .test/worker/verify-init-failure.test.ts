@@ -29,7 +29,8 @@ describe('Worker Pool Initialization Rejection', () => {
 
     const onReady = vi.fn();
     const onResult = vi.fn();
-    const pool = createWorkerPool(onReady, onResult);
+    const onLog = vi.fn();
+    const pool = createWorkerPool(onReady, onResult, onLog);
 
     const initPromise = pool.init(mockConfig, 1);
     await new Promise(res => setTimeout(res, 0));
@@ -59,7 +60,8 @@ describe('Worker Pool Initialization Rejection', () => {
 
     const onReady = vi.fn();
     const onResult = vi.fn();
-    const pool = createWorkerPool(onReady, onResult);
+    const onLog = vi.fn();
+    const pool = createWorkerPool(onReady, onResult, onLog);
 
     // 1. Initial successful init
     const initTask = pool.init(mockConfig, 1);
@@ -68,7 +70,7 @@ describe('Worker Pool Initialization Rejection', () => {
     await initTask;
 
     // 2. Trigger reinit with error
-    const reinitPromise = pool.reinit({ modelId: 'new-model' });
+    const reinitPromise = pool.reinit({ modelId: 'new-model', voiceId: 'new-model' });
     await new Promise(res => setTimeout(res, 0));
 
     // The shadow worker is the second one created
