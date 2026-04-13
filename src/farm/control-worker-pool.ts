@@ -38,11 +38,16 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
           else onResult(msg);
         });
         workers.push(worker);
-        initPromises.push(new Promise<void>(res => {
-          const handler = (e: MessageEvent) => {
-            if (e.data.type === 'ready' && e.data.instanceId === id) {
+        initPromises.push(new Promise<void>((res, rej) => {
+          const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
+            if (e.data.instanceId !== id) return;
+            
+            if (e.data.type === 'ready') {
               worker.worker.removeEventListener('message', handler);
               res();
+            } else if (e.data.type === 'error') {
+              worker.worker.removeEventListener('message', handler);
+              rej(new Error(`Worker ${id} failed to initialize: ${e.data.error}`));
             }
           };
           worker.worker.addEventListener('message', handler);
@@ -92,11 +97,16 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
           else onResult(msg);
         });
         shadowPool.push(worker);
-        initPromises.push(new Promise<void>(res => {
-          const handler = (e: MessageEvent) => {
-            if (e.data.type === 'ready' && e.data.instanceId === id) {
+        initPromises.push(new Promise<void>((res, rej) => {
+          const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
+            if (e.data.instanceId !== id) return;
+
+            if (e.data.type === 'ready') {
               worker.worker.removeEventListener('message', handler);
               res();
+            } else if (e.data.type === 'error') {
+              worker.worker.removeEventListener('message', handler);
+              rej(new Error(`Worker ${id} failed to initialize: ${e.data.error}`));
             }
           };
           worker.worker.addEventListener('message', handler);
@@ -218,6 +228,7 @@ function createWorker(id: number, config: PiperWorkerConfig, onMessage: (msg: Pi
     onMessage({ type: "error", instanceId: id, error: "Worker crashed" });
   };
 
+  console.log(`[WorkerPool] Spawning worker ${id} with callback:`, config.callbackModule?.path);
   worker.postMessage({ type: "init", config: { ...config, instanceId: id } });
 
   return { id, worker, busy: false, modelId: config.modelId };

@@ -31,6 +31,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 } {
   let farm: PiperWorkerFarm | null = null;
   let activeModelId: string | null = null;
+  let activeCallbackPath: string | null = null;
   let loadingModelId: string | null = null;
   let lastTransitionId = 0;
   const downloader = createAssetDownloadController();
@@ -40,7 +41,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   return {
     async init(config: FarmConfig) {
       const transitionId = ++lastTransitionId;
-      const { modelId, modelUrls } = config;
+      const { modelId, modelUrls, callbackModule } = config;
 
       // Ensure the asset-intercepting Service Worker is registered before
       // any /assets/* requests are issued. Non-fatal if SW is unsupported.
@@ -52,8 +53,28 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
         }
       }
 
-      // If already initialized and requesting same model, skip
-      if (farm && activeModelId === modelId) return;
+      // 1. Initial configuration check
+      const isSameModel = activeModelId === modelId;
+      const isSameCallback = activeCallbackPath === (callbackModule?.path || null);
+
+      // If already initialized and configuration matches perfectly, skip
+      if (farm && isSameModel && isSameCallback) return;
+
+      // If same model but configuration changed (e.g. callback module), trigger a re-init
+      if (farm && isSameModel && !isSameCallback) {
+        try {
+          await farm.reinit({ 
+            modelId,
+            voiceId: config.voiceId,
+            callbackModule: callbackModule
+          });
+          activeCallbackPath = callbackModule?.path || null;
+          return;
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          throw err;
+        }
+      }
 
       // Ensure asset integrity and cache in OPFS
       const modelEntry = PIPER_MODELS.find(m => m.id === modelId);
@@ -125,6 +146,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       if (transitionId !== lastTransitionId) return;
 
       activeModelId = modelId;
+      activeCallbackPath = callbackModule?.path || null;
       loadingModelId = null;
     },
 

@@ -71,7 +71,7 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
   instanceId = id || 0;
   currentModelId = modelId;
 
-  log(`=== INIT START [${modelId}] ===`);
+  log(`=== INIT START [${modelId}] ===`, { callback: callbackModule?.path });
   
   try {
     // 1. Load context from OPFS
@@ -157,11 +157,13 @@ export async function processPiperSynthesis(
   const { audio, durations } = await runInference(ortInstance, phonemeIds, options, resolvedSpeakerId);
   
   // 3. Durations Conversion (Frames -> MS)
-  if (durations) {
-    const msPerFrame = (256 / modelConfig.audio.sample_rate) * 1000;
-    for (let i = 0; i < durations.length; i++) {
-      durations[i] *= msPerFrame;
-    }
+  if (!durations || durations.length === 0) {
+    throw new Error("Durations missing from inference results. Ensure the model is patched to export durations tensor.");
+  }
+
+  const msPerFrame = (256 / modelConfig.audio.sample_rate) * 1000;
+  for (let i = 0; i < durations.length; i++) {
+    durations[i] *= msPerFrame;
   }
 
   // 4. Volume Scaling
@@ -194,7 +196,13 @@ export async function processPiperSynthesis(
   // 4. Invoke user callback
   let callbackResult: any = undefined;
   if (userCallback) {
-    callbackResult = await userCallback(result);
+    try {
+      callbackResult = await userCallback(result);
+    } catch (err) {
+      const errorVal = err instanceof Error ? err : new Error(String(err));
+      error(`Callback execution failed: ${errorVal.message}`);
+      throw new Error(`User callback '${currentModelId}' failed: ${errorVal.message}`);
+    }
   }
 
   // 5. Transfer results

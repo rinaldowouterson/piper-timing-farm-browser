@@ -21,6 +21,7 @@ export interface RequestStatusPayload {
   text: string;
   state: RequestState;
   modelId?: string;
+  error?: string;
 }
 
 export interface AudioSynthesisResult {

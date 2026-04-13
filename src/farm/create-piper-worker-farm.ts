@@ -65,7 +65,13 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
         const pending = queue.find(r => r.requestId === originalRequest.requestId);
         if (pending) {
           activeRequests.delete(originalRequest.requestId);
-          emit({ requestId: pending.requestId, text: pending.text, state: 'error', modelId: pool.getActiveModelId() || undefined });
+          emit({ 
+            requestId: pending.requestId, 
+            text: pending.text, 
+            state: 'error', 
+            modelId: pool.getActiveModelId() || undefined,
+            error: error 
+          });
           pending.reject(new Error(error));
           queue.splice(queue.indexOf(pending), 1);
         }
