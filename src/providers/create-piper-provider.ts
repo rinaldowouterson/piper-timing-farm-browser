@@ -3,7 +3,8 @@ import type {
   FarmConfig, 
   AudioSynthesisResult,
   DownloadState,
-  RequestStatusPayload
+  RequestStatusPayload,
+  WorkerLogPayload
 } from "../types";
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
@@ -28,6 +29,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   cancelDownload: (modelId: string) => Promise<void>;
   clearAndRedownloadModel: (modelId: string) => Promise<void>;
   getDownloadState: () => Map<string, DownloadState>;
+  onLog: (listener: (log: WorkerLogPayload) => void) => () => void;
 } {
   let farm: PiperWorkerFarm | null = null;
   let activeModelId: string | null = null;
@@ -36,7 +38,9 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   let lastTransitionId = 0;
   const downloader = createAssetDownloadController();
   const queueListeners = new Set<(status: RequestStatusPayload) => void>();
+  const logListeners = new Set<(log: WorkerLogPayload) => void>();
   let farmUnsubscribe: (() => void) | null = null;
+  let farmLogUnsubscribe: (() => void) | null = null;
 
   return {
     async init(config: FarmConfig) {
@@ -121,6 +125,10 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
           queueListeners.forEach(l => l(status));
         });
 
+        farmLogUnsubscribe = farm.onLog((log) => {
+          logListeners.forEach(l => l(log));
+        });
+
         await farm.init({
           ...config,
         });
@@ -171,6 +179,8 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 
     terminate() {
       downloader.cancelAll();
+      farmUnsubscribe?.();
+      farmLogUnsubscribe?.();
       farm?.terminate();
       farm = null;
       activeModelId = null;
@@ -213,6 +223,13 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       queueListeners.add(listener);
       return () => {
         queueListeners.delete(listener);
+      };
+    },
+
+    onLog(listener) {
+      logListeners.add(listener);
+      return () => {
+        logListeners.delete(listener);
       };
     },
 

@@ -2,7 +2,8 @@ import type {
   WorkerState, 
   PiperWorkerMessageIn, 
   PiperWorkerMessageOut, 
-  PiperWorkerConfig 
+  PiperWorkerConfig,
+  WorkerLogPayload
 } from "../types";
 
 /**
@@ -12,7 +13,11 @@ import type {
  * Ensures that if a worker fails, it's restarted, and manages the 
  * stateful model re-initialization.
  */
-export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: PiperWorkerMessageOut) => void) {
+export function createWorkerPool(
+  onReady: (id: number) => void, 
+  onResult: (msg: PiperWorkerMessageOut) => void,
+  onLog: (log: WorkerLogPayload) => void
+) {
   let workers: WorkerState[] = [];
   let nextWorkerId = 0;
   let isInitialized = false;
@@ -36,21 +41,27 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
         const worker = createWorker(id, config, (msg) => {
           if (msg.type === 'ready') onReady(msg.instanceId);
           else onResult(msg);
-        });
+        }, onLog);
         workers.push(worker);
         initPromises.push(new Promise<void>((res, rej) => {
           const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
-            if (e.data.instanceId !== id) return;
+            const msg = e.data;
+            if (msg.type === 'log') return; // Logs don't trigger ready/error for init
+            if (msg.instanceId !== id) return;
             
-            if (e.data.type === 'ready') {
-              worker.worker.removeEventListener('message', handler);
-              res();
-            } else if (e.data.type === 'error') {
-              worker.worker.removeEventListener('message', handler);
-              rej(new Error(`Worker ${id} failed to initialize: ${e.data.error}`));
-            }
+            if (msg.type === 'ready') cleanup(res);
+            else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
           };
+          const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
+          
+          const cleanup = (cb: () => void) => {
+            worker.worker.removeEventListener('message', handler);
+            worker.worker.removeEventListener('error', errHandler);
+            cb();
+          };
+
           worker.worker.addEventListener('message', handler);
+          worker.worker.addEventListener('error', errHandler);
         }));
       }
       await Promise.all(initPromises);
@@ -95,21 +106,27 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
         const worker = createWorker(id, newConfig, (msg) => {
           if (msg.type === 'ready') onReady(msg.instanceId);
           else onResult(msg);
-        });
+        }, onLog);
         shadowPool.push(worker);
         initPromises.push(new Promise<void>((res, rej) => {
           const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
-            if (e.data.instanceId !== id) return;
-
-            if (e.data.type === 'ready') {
-              worker.worker.removeEventListener('message', handler);
-              res();
-            } else if (e.data.type === 'error') {
-              worker.worker.removeEventListener('message', handler);
-              rej(new Error(`Worker ${id} failed to initialize: ${e.data.error}`));
-            }
+            const msg = e.data;
+            if (msg.type === 'log') return;
+            if (msg.instanceId !== id) return;
+            
+            if (msg.type === 'ready') cleanup(res);
+            else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
           };
+          const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
+
+          const cleanup = (cb: () => void) => {
+            worker.worker.removeEventListener('message', handler);
+            worker.worker.removeEventListener('error', errHandler);
+            cb();
+          };
+
           worker.worker.addEventListener('message', handler);
+          worker.worker.addEventListener('error', errHandler);
         }));
       }
 
@@ -176,7 +193,7 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
         } else {
           onResult(msg);
         }
-      });
+      }, onLog);
       replacement.transitioning = true;
 
       // 4. Swap into the same array position to maintain pool size
@@ -214,7 +231,12 @@ export function createWorkerPool(onReady: (id: number) => void, onResult: (msg: 
   };
 }
 
-function createWorker(id: number, config: PiperWorkerConfig, onMessage: (msg: PiperWorkerMessageOut) => void): WorkerState {
+function createWorker(
+  id: number, 
+  config: PiperWorkerConfig, 
+  onMessage: (msg: PiperWorkerMessageOut) => void,
+  onLog: (log: WorkerLogPayload) => void
+): WorkerState {
   // Use Vite-safe worker instantiation if possible, otherwise use new URL
   const worker = new Worker(new URL("../worker/process-piper-synthesis.worker.ts", import.meta.url), {
     type: "module",
@@ -222,7 +244,13 @@ function createWorker(id: number, config: PiperWorkerConfig, onMessage: (msg: Pi
     name: `PiperWorker-${id}`
   });
 
-  worker.onmessage = (e: MessageEvent<PiperWorkerMessageOut>) => onMessage(e.data);
+  worker.onmessage = (e: MessageEvent<PiperWorkerMessageOut>) => {
+    if (e.data.type === 'log') {
+      onLog(e.data.payload);
+    } else {
+      onMessage(e.data);
+    }
+  };
   worker.onerror = (e) => {
     console.error(`Worker ${id} error:`, e);
     onMessage({ type: "error", instanceId: id, error: "Worker crashed" });

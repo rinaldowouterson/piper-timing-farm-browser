@@ -29,9 +29,36 @@ let userCallback: ((result: AudioSynthesisResult) => any) | null = null;
 
 // --- Logging ---
 const PREFIX = () => `[PiperWorker:${instanceId}:${deviceLabel}]`;
-const log = (msg: string, ...args: any[]) => console.log(`${PREFIX()} ${msg}`, ...args);
-const warn = (msg: string, ...args: any[]) => console.warn(`${PREFIX()} ${msg}`, ...args);
-const error = (msg: string, ...args: any[]) => console.error(`${PREFIX()} ${msg}`, ...args);
+
+function sendLog(level: 'info' | 'warn' | 'error' | 'debug', message: string) {
+  self.postMessage({
+    type: 'log',
+    payload: {
+      level,
+      message,
+      workerId: instanceId,
+      timestamp: Date.now()
+    }
+  });
+}
+
+const log = (msg: string, ...args: any[]) => {
+  const fullMsg = `${PREFIX()} ${msg}`;
+  console.log(fullMsg, ...args);
+  sendLog('info', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
+};
+
+const warn = (msg: string, ...args: any[]) => {
+  const fullMsg = `${PREFIX()} ${msg}`;
+  console.warn(fullMsg, ...args);
+  sendLog('warn', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
+};
+
+const error = (msg: string, ...args: any[]) => {
+  const fullMsg = `${PREFIX()} ${msg}`;
+  console.error(fullMsg, ...args);
+  sendLog('error', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
+};
 
 // --- Message Handler ---
 self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {

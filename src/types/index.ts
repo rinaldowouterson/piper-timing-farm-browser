@@ -24,6 +24,13 @@ export interface RequestStatusPayload {
   error?: string;
 }
 
+export interface WorkerLogPayload {
+  level: 'info' | 'warn' | 'error' | 'debug';
+  message: string;
+  workerId: number;
+  timestamp: number;
+}
+
 export interface AudioSynthesisResult {
   requestId: string;
 	audioData: Float32Array;
@@ -164,6 +171,7 @@ export interface PiperWorkerFarm {
 		totalWorkers: number;
 	};
 	onQueueStatus(listener: (status: RequestStatusPayload) => void): () => void;
+  onLog(listener: (log: WorkerLogPayload) => void): () => void;
 }
 
 export type PiperWorkerMessageIn =
@@ -181,6 +189,7 @@ export type PiperWorkerMessageIn =
 export type PiperWorkerMessageOut =
 	| { type: "ready"; instanceId: number }
 	| { type: "error"; instanceId: number; error: string; originalRequest?: PiperWorkerMessageIn }
+  | { type: "log"; payload: WorkerLogPayload }
 	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: any };
 
 export interface PiperModelConfig {

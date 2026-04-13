@@ -4,7 +4,8 @@ import type {
   AudioSynthesisResult, 
   PendingRequest, 
   PiperWorkerMessageOut,
-  RequestStatusPayload
+  RequestStatusPayload,
+  WorkerLogPayload
 } from "../types";
 import { createWorkerPool } from "./control-worker-pool";
 import { ONNX_ASSET_URLS } from "../worker/resolve-assets-onnxruntime";
@@ -24,10 +25,15 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
   /** Maps requestId → worker id for actively processing requests. */
   const activeRequests = new Map<string, number>();
   const listeners = new Set<(status: RequestStatusPayload) => void>();
-  const pool = createWorkerPool(onReady, onResult);
+  const logListeners = new Set<(log: WorkerLogPayload) => void>();
+  const pool = createWorkerPool(onReady, onResult, onLogMessage);
 
   function emit(payload: RequestStatusPayload) {
     listeners.forEach(l => l(payload));
+  }
+
+  function onLogMessage(payload: WorkerLogPayload) {
+    logListeners.forEach(l => l(payload));
   }
 
   function onReady(id: number) {
@@ -254,6 +260,11 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     onQueueStatus(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    
+    onLog(listener) {
+      logListeners.add(listener);
+      return () => logListeners.delete(listener);
     }
   };
 }
