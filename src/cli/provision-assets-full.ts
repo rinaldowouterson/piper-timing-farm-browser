@@ -37,29 +37,36 @@ async function provision() {
   }
 
   const absTargetDir = path.resolve(cwd, targetDir);
-  
-  // Source resolution: Relative to the compiled cli.js in the dist folder
-  // Structure: 
-  //   node_modules/piper-timing-farm/dist/cli.js
-  //   node_modules/piper-timing-farm/dist/worker/assets/
-  const sourceBinDir = path.resolve(__dirname, 'worker/assets');
-  const sourceScriptDir = path.resolve(__dirname, 'assets');
 
-  // Unified Provisioning Strategy
-  const copyJob = (srcDir: string) => {
-    if (fs.existsSync(srcDir)) {
-      copyFiles(srcDir, absTargetDir, targetDir);
-    }
-  };
+  // Source resolution: Resolved relative to this compiled script in dist/.
+  // After "The Great Flattening", all assets live in dist/assets/ — a sibling
+  // of the compiled cli.js (dist/cli.js).
+  // Consumers always have this folder. If it is missing, the install is corrupt.
+  const sourceAssetsDir = path.resolve(__dirname, 'assets');
 
-  if (!fs.existsSync(sourceBinDir)) {
-    // Development fallback (running from src)
-    const devSourceBinDir = path.resolve(__dirname, '../../src/worker/assets');
-    copyJob(devSourceBinDir);
+  if (!fs.existsSync(sourceAssetsDir)) {
+    console.error(
+      '\nError: Cannot locate asset directory at ' + sourceAssetsDir +
+      '\nThis directory is part of the published package and should never be missing.' +
+      '\nIf you are developing piper-timing-farm itself, run `npm run build` first.\n'
+    );
+    process.exit(1);
+  }
+
+  copyFiles(sourceAssetsDir, absTargetDir, targetDir);
+
+  // PROVISION SERVICE WORKER: Copy to the root of the target directory (e.g., /public/)
+  // This ensures the SW has maximum scope for interception.
+  const swSource = path.join(__dirname, 'control-asset-sw.js');
+  const swTargetDir = path.dirname(absTargetDir);
+  const swTarget = path.join(swTargetDir, 'control-asset-sw.js');
+
+  if (fs.existsSync(swSource)) {
+    console.log(`\nProvisioning Service Worker to ${path.relative(cwd, swTargetDir)}...`);
+    fs.copyFileSync(swSource, swTarget);
+    console.log(`  [OK] control-asset-sw.js`);
   } else {
-    // Production path (running from node_modules/dist)
-    copyJob(sourceBinDir);
-    copyJob(sourceScriptDir);
+    console.warn(`\n[Warning] Could not find Service Worker source at ${swSource}. Skipping SW provisioning.`);
   }
 }
 
@@ -83,7 +90,7 @@ function copyFiles(sourceDir: string, absTargetDir: string, relativeDisplayPath:
 
   console.log(`\nSuccess! ${files.length} assets provisioned.`);
   console.log('Next steps:');
-  console.log(`1. Ensure your server serves ${relativeDisplayPath}`);
+  console.log(`1. Ensure your server serves ${relativeDisplayPath} and /control-asset-sw.js`);
   console.log('2. Use the library normally: import { ... } from "piper-timing-farm"\n');
 }
 

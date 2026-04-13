@@ -13,7 +13,9 @@ High-performance, multi-threaded Piper TTS engine for the browser. Features fram
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
-- [Entry Points](#entry-points)
+- [Unified Asset Delivery](#unified-asset-delivery)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
 - [Core Features](#core-features)
   - [Parallel FIFO Sequencer](#parallel-fifo-sequencer)
   - [Model Switching Lifecycle](#model-switching-lifecycle)
@@ -54,42 +56,62 @@ Unlike standard Piper wrappers, this library:
 
 ```bash
 npm install piper-timing-farm
+
+# Optional but recommended Peer Dependency:
+npm install onnxruntime-web
 ```
 
-### Post-Install Setup (Tier 1: Local Assets)
+> [!NOTE]
+> **Why Peer Dependencies?** By providing `onnxruntime-web` yourself, you ensure that multiple ORT-powered libraries in your project share the same engine version, preventing memory bloat and binary conflicts.
 
-For the default entry point, WASM and binary assets must be served from your project's static folder:
+---
+
+## Unified Asset Delivery
+
+`piper-timing-farm` uses a modern **Service Worker Interception** model to deliver WASM and binary assets. All asset requests (Piper WASM, ONNX Runtime) are routed through a single origin-local path: `/assets/*`.
+
+### How it works:
+1. **OPFS (Fast Path)**: The Service Worker first checks the **Origin Private File System**. If the asset is cached and SHA-256 verified, it is served instantly (~50ms).
+2. **Local Server**: If not in OPFS, it checks your local server's `/assets/` folder.
+3. **CDN Fallback**: If the asset is missing from your server, it automatically falls back to the **jsDelivr CDN**.
+
+This ensures that everything "just works" out of the box, while naturally optimizing for performance on the second run.
+
+### Why host assets locally?
+
+While the Library automatically falls back to a global CDN, hosting assets yourself is recommended for:
+
+- **Privacy & Security**: Corporate networks often block traffic to public CDNs (jsDelivr, etc.).
+- **Offline-First Capability**: Enables the library to work on the **very first visit** without an internet connection (assuming a PWA/cached environment).
+- **Environment Consistency**: Guarantees the exact same binary versions across all deployment stages.
+
+### Local Provisioning
+
+Use the CLI to copy the production-ready assets to your static folder:
 
 ```bash
 npx piper-farm init
 ```
 
 This CLI command:
-
-- **Intelligent Detection**: Specifically handles SvelteKit projects (`static/assets`).
-- **Universal Default**: Defaults to the modern `public/assets` convention used by **Angular (v17+)**, **Next.js**, **Vite**, and **React**.
-- Copies all required assets to the appropriate directory.
-- Provides next-step guidance.
-
-**Skip this step if using the CDN entry point (`piper-timing-farm/cdn`).**
+- **Intelligent Detection**: Automatically targets SvelteKit (`static/assets`) or Vite/React/Next.js (`public/assets`).
+- **Sourcing**: Pulls binaries directly from the package's internal `dist/assets/` folder to ensure version-locked results.
+- **Service Worker**: The library automatically registers `dist/control-asset-sw.js` to orchestrate the OPFS -> Local -> CDN resolution chain.
 
 ---
 
 ## Quick Start
-
-### Tier 1: Local Assets (Recommended for Production)
 
 ```typescript
 import { createPiperProvider, PIPER_MODELS } from "piper-timing-farm";
 
 const provider = createPiperProvider();
 
-// Initialize with a model from the registry
-const model = PIPER_MODELS.find((m) => m.id === "en_US-bryce-medium");
+// Initialize the farm
 await provider.init({
-  modelId: model.id,
-  voiceId: model.id,
-  cpuInstances: 2, // Number of parallel workers
+  modelId: "en_US-bryce-medium", // or use PIPER_MODELS to find one
+  voiceId: "en_US-bryce-medium",
+  cpuInstances: 2, 
   onProgress: (state) => {
     console.log(`Downloading: ${(state.progress * 100).toFixed(1)}%`);
   },
@@ -97,33 +119,13 @@ await provider.init({
 
 // Synthesize text
 const result = await provider.synthesize("Hello, world!", {
-  speed: 1.0, // Speech rate multiplier
-  volume: 0.9, // Volume scaling
+  speed: 1.0,  // Speech rate
+  volume: 0.9, // Volume
 });
 
-// Access audio and timing data
+// Access zero-copy audio and timing data
 const audioBlob = new Blob([result.audioData], { type: "audio/wav" });
 const durations = result.metadata.durations; // Per-phoneme timing in ms
-```
-
-### Tier 2: CDN Assets (Zero-Config)
-
-```typescript
-import {
-  createPiperProvider,
-  PIPER_MODELS,
-  PIPER_REPO_BASE_URL,
-} from "piper-timing-farm/cdn";
-
-const provider = createPiperProvider();
-await provider.init({
-  modelId: "en_US-bryce-medium",
-  voiceId: "en_US-bryce-medium",
-  cpuInstances: 2,
-});
-
-// All assets load from jsDelivr CDN, cached to OPFS on first use
-const result = await provider.synthesize("Hello from the cloud!");
 ```
 
 ---
@@ -148,45 +150,28 @@ Main Thread                    Worker Pool
 
 **Key Components:**
 
-| Component                                                                        | File                      | Purpose                                  |
-| -------------------------------------------------------------------------------- | ------------------------- | ---------------------------------------- |
-| `create-piper-provider()`                                                        | Provider                  | High-level API with download management  |
-| `piper-timing-farm/worker`                                                       | `processPiperSynthesis()` | Direct worker logic (Advanced)           |
-| [`createPiperWorkerFarm`](src/farm/create-piper-worker-farm.ts)                  | Farm                      | Queue management and worker distribution |
-| [`process-piper-synthesis.worker`](src/worker/process-piper-synthesis.worker.ts) | Worker                    | ONNX inference and phonemization         |
-| [`createAssetDownloadController`](src/farm/control-asset-download.ts)            | Downloader                | Model asset download orchestration       |
+| Component                   | Role                | Purpose                                   |
+| --------------------------- | ------------------- | ----------------------------------------- |
+| `create-piper-provider()`   | Orchestrator        | High-level API and lifecycle management   |
+| `control-asset-sw.ts`       | Interception Proxy | Resolves assets via OPFS -> Local -> CDN  |
+| `createPiperWorkerFarm()`  | Farm                | Queue management and worker distribution  |
+| `process-piper-synthesis.worker.ts` | Worker Engine | ONNX inference and phonemization          |
+| `createAssetDownloadController()` | Downloader   | Model asset download orchestration        |
 
 ---
 
-## Entry Points
+## Asset Resolution
 
-| Entry      | Import Path               | Asset Source     | Use Case                 |
-| ---------- | ------------------------- | ---------------- | ------------------------ |
-| **Tier 1** | `'piper-timing-farm'`     | Local `/assets/` | Production, offline apps |
-| **Tier 2** | `'piper-timing-farm/cdn'` | jsDelivr CDN     | Prototyping, no setup    |
+The library simplifies asset management by using a single logical path for all binary dependencies.
 
-### Tier 1: Local Assets
+| Asset Type         | Logical Path                  | Sourced From (at build time) |
+| ------------------ | ----------------------------- | ---------------------------- |
+| **Piper WASM**     | `/assets/piper_phonemize.*`   | `@diffusionstudio/piper-wasm`|
+| **ONNX Runtime**   | `/assets/ort*`                | `onnxruntime-web`            |
+| **Voice Models**   | `/assets/*.onnx` (if locally hosted) | HuggingFace (Production Default) |
 
-Assets are served from your project's static directory (provisioned via `npx piper-farm init`):
 
-- Piper WASM: `/assets/piper_phonemize.wasm`
-- Piper Data: `/assets/piper_phonemize.data`
-- Piper JS: `/assets/piper_phonemize.js`
-- ONNX Runtime: `/assets/ort.wasm.min.mjs`, `/assets/ort-wasm-simd-threaded.mjs`, `/assets/ort-wasm-simd-threaded.wasm`
-
-### Tier 2: CDN Assets
-
-All assets are resolved from **jsDelivr CDN**.
-
-```typescript
-// Piper phonemizer
-"https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/";
-
-// ONNX Runtime
-"https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
-```
-
-**OPFS caching ensures assets are only downloaded once**, regardless of entry point.
+### OPFS caching ensures assets are only downloaded once.
 
 ---
 

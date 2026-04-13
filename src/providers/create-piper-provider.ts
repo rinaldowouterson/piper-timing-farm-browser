@@ -8,9 +8,9 @@ import type {
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
 import { createAssetDownloadController } from "../farm/control-asset-download";
-import { FULL_ASSET_URLS } from "../worker/resolve-assets-full";
 import { PIPER_MODELS } from "../expose-piper-models";
 import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
+import { setupAssetSW } from "../utils/setup-asset-sw";
 
 /**
  * High-level Piper Provider with stress-test-proof background model switching.
@@ -41,7 +41,17 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
     async init(config: FarmConfig) {
       const transitionId = ++lastTransitionId;
       const { modelId, modelUrls } = config;
-      
+
+      // Ensure the asset-intercepting Service Worker is registered before
+      // any /assets/* requests are issued. Non-fatal if SW is unsupported.
+      if (typeof window !== 'undefined') {
+        try {
+          await setupAssetSW();
+        } catch {
+          console.warn('[PiperProvider] Asset SW registration failed — falling back to direct asset URLs');
+        }
+      }
+
       // If already initialized and requesting same model, skip
       if (farm && activeModelId === modelId) return;
 
@@ -92,8 +102,6 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 
         await farm.init({
           ...config,
-          onnxRuntimePaths: config.onnxRuntimePaths || FULL_ASSET_URLS.onnxRuntime,
-          piperPaths: config.piperPaths || FULL_ASSET_URLS.piper
         });
       } else {
         try {

@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import type * as ort from "onnxruntime-web";
+import type { OrtInferenceSession } from "../types/ort-minimal";
 import type { 
   PiperWorkerMessageIn, 
   PiperWorkerMessageOut, 
@@ -16,7 +16,7 @@ import { collectTransferables } from "./index";
 declare const self: DedicatedWorkerGlobalScope;
 
 // --- State ---
-let ortSession: ort.InferenceSession | null = null;
+let ortSession: OrtInferenceSession | null = null;
 let ortInstance: any = null;
 let phonemizerModule: PiperPhonemizerModule | null = null;
 let modelConfig: ModelConfig | null = null;

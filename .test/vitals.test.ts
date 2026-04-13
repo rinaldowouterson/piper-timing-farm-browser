@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -18,6 +18,15 @@ import { createPiperWorkerFarm } from '../src/farm/create-piper-worker-farm';
 describe('CLI > Unified Framework Orchestration', () => {
     const root = process.cwd();
     const testSpace = path.join(root, 'tmp/unified-test');
+    const cliPath = path.join(root, 'dist/cli.js');
+
+    beforeAll(() => {
+        // The CLI test always exercises the built artifact, not the source.
+        // This ensures we are testing the same binary as consumers receive.
+        if (!fs.existsSync(cliPath)) {
+            execSync('npm run build', { cwd: root, stdio: 'inherit' });
+        }
+    });
 
     beforeEach(() => {
         if (fs.existsSync(testSpace)) fs.rmSync(testSpace, { recursive: true });
@@ -33,12 +42,12 @@ describe('CLI > Unified Framework Orchestration', () => {
         fs.mkdirSync(project, { recursive: true });
         fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({ name: 'vite-vanilla' }));
 
-        // Run the CLI from the dist folder (must be pre-built)
-        const cliPath = path.join(root, 'src/cli/provision-assets-full.ts');
-        execSync(`npx tsx ${cliPath} init`, { cwd: project });
+        // Runs the compiled artifact — exactly what consumers execute
+        execSync(`node ${cliPath} init`, { cwd: project });
 
         expect(fs.existsSync(path.join(project, 'public/assets/ort.wasm.min.mjs'))).toBe(true);
         expect(fs.existsSync(path.join(project, 'public/assets/piper_phonemize.wasm'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'public/control-asset-sw.js'))).toBe(true);
     });
 
     it('should provision assets to SvelteKit Skeleton (static/assets)', () => {
@@ -47,20 +56,19 @@ describe('CLI > Unified Framework Orchestration', () => {
         fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({ name: 'sveltekit-app' }));
         fs.writeFileSync(path.join(project, 'svelte.config.js'), ''); // Trigger Svelte detection
 
-        const cliPath = path.join(root, 'src/cli/provision-assets-full.ts');
-        execSync(`npx tsx ${cliPath} init`, { cwd: project });
+        execSync(`node ${cliPath} init`, { cwd: project });
 
         expect(fs.existsSync(path.join(project, 'static/assets/ort.wasm.min.mjs'))).toBe(true);
         expect(fs.existsSync(path.join(project, 'static/assets/piper_phonemize.wasm'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'static/control-asset-sw.js'))).toBe(true);
     });
 
     it('should reject execution outside project root (no package.json)', () => {
         const project = path.join(testSpace, 'orphan-folder');
         fs.mkdirSync(project, { recursive: true });
 
-        const cliPath = path.join(root, 'src/cli/provision-assets-full.ts');
         try {
-            execSync(`npx tsx ${cliPath} init`, { cwd: project, stdio: 'ignore' });
+            execSync(`node ${cliPath} init`, { cwd: project, stdio: 'ignore' });
             throw new Error('Should have failed');
         } catch (e) {
             // Expected failure
