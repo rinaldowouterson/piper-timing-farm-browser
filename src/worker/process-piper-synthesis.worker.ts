@@ -23,9 +23,10 @@ let modelConfig: ModelConfig | null = null;
 let instanceId = -1;
 let deviceLabel = "CPU";
 let currentModelId = "";
+let defaultSpeakerId = 0;
 
 /** User-defined callback function loaded into the worker global scope. */
-let userCallback: ((result: AudioSynthesisResult) => any) | null = null;
+let userCallback: ((result: AudioSynthesisResult) => unknown) | null = null;
 
 // --- Logging ---
 const PREFIX = () => `[PiperWorker:${instanceId}:${deviceLabel}]`;
@@ -42,19 +43,19 @@ function sendLog(level: 'info' | 'warn' | 'error' | 'debug', message: string) {
   });
 }
 
-const log = (msg: string, ...args: any[]) => {
+const log = (msg: string, ...args: unknown[]) => {
   const fullMsg = `${PREFIX()} ${msg}`;
   console.log(fullMsg, ...args);
   sendLog('info', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
 };
 
-const warn = (msg: string, ...args: any[]) => {
+const warn = (msg: string, ...args: unknown[]) => {
   const fullMsg = `${PREFIX()} ${msg}`;
   console.warn(fullMsg, ...args);
   sendLog('warn', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
 };
 
-const error = (msg: string, ...args: any[]) => {
+const error = (msg: string, ...args: unknown[]) => {
   const fullMsg = `${PREFIX()} ${msg}`;
   console.error(fullMsg, ...args);
   sendLog('error', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
@@ -70,7 +71,7 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
         await setupPiperWorker(msg.config);
         break;
       case "load-callback":
-        await handleLoadCallback(msg.modulePath, msg.functionName);
+        await handleLoadCallback(msg.modulePath, msg.functionName, msg.integrity);
         break;
       case "synthesize":
         await processPiperSynthesis(msg.text, msg.requestId, {
@@ -81,12 +82,12 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
         break;
     }
   } catch (err) {
-    const errorVal = err instanceof Error ? err : new Error(String(err));
-    error("Uncaught worker error:", errorVal.message);
+    const sanitizedError = sanitizeErrorPayload(err);
+    error("Uncaught worker error:", sanitizedError);
     postMessage({
       type: "error",
       instanceId,
-      error: errorVal.message,
+      error: sanitizedError,
       originalRequest: msg
     });
   }
@@ -94,11 +95,12 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
 
 // --- Initialization ---
 export async function setupPiperWorker(config: PiperWorkerConfig) {
-  const { voiceId, modelId, onnxRuntimePaths, piperPaths, instanceId: id, callbackModule } = config;
+  const { modelId, onnxRuntimePaths, piperPaths, instanceId: id, callbackModule, defaultSpeakerId: defaultSid } = config;
   instanceId = id || 0;
   currentModelId = modelId;
+  defaultSpeakerId = defaultSid || 0;
 
-  log(`=== INIT START [${modelId}] ===`, { callback: callbackModule?.path });
+  log(`=== INIT START [${modelId}] ===`, { callback: callbackModule?.path, defaultSpeakerId });
   
   try {
     // 1. Load context from OPFS
@@ -134,11 +136,11 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     });
 
     // 3. Load Phonemizer
-    await loadPhonemizerModule(piperPaths);
+    await loadPhonemizerModule(piperPaths, piperPaths.piperJsSha256);
 
     // 4. Load Callback if configured
     if (callbackModule) {
-      await handleLoadCallback(callbackModule.path, callbackModule.functionName);
+      await handleLoadCallback(callbackModule.path, callbackModule.functionName, callbackModule.integrity);
     }
 
     log("=== INIT COMPLETE ===");
@@ -150,17 +152,35 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
   }
 }
 
-async function handleLoadCallback(modulePath: string, functionName: string) {
+async function handleLoadCallback(modulePath: string, functionName: string, expectedHash?: string) {
   log(`Loading callback: ${functionName} from ${modulePath}`);
   try {
+    // 1. Fetch content for integrity check if hash provided
+    // This also serves as a path validation pre-flight
+    if (expectedHash) {
+      const response = await fetch(modulePath);
+      if (!response.ok) throw new Error(`Failed to fetch callback module for integrity check: ${response.statusText}`);
+      const content = await response.text();
+      const isIntegrityValid = await verifyIntegrity(content, expectedHash);
+      if (!isIntegrityValid) {
+        throw new Error(`Integrity mismatch for callback module: ${modulePath}`);
+      }
+    }
+
+    // 2. Perform Dynamic Import
     const module = await import(/* @vite-ignore */ modulePath);
     userCallback = module[functionName];
     if (typeof userCallback !== 'function') {
       throw new Error(`Export '${functionName}' is not a function in ${modulePath}`);
     }
+    
     log("Callback loaded successfully");
+    postMessage({ type: "callback-loaded", instanceId });
   } catch (err) {
-    error("Failed to load callback module:", err);
+    userCallback = null; // Clear state on failure
+    const errorVal = err instanceof Error ? err.message : String(err);
+    error("Failed to load callback module:", errorVal);
+    postMessage({ type: "callback-failed", instanceId, error: errorVal });
     throw err;
   }
 }
@@ -221,7 +241,7 @@ export async function processPiperSynthesis(
   };
 
   // 4. Invoke user callback
-  let callbackResult: any = undefined;
+  let callbackResult: unknown = undefined;
   if (userCallback) {
     try {
       callbackResult = await userCallback(result);
@@ -248,11 +268,18 @@ export async function processPiperSynthesis(
 
 let lastPhonemizerOutput: PhonemizerOutput | null = null;
 
-async function loadPhonemizerModule(piperPaths: PiperWorkerConfig["piperPaths"]) {
+async function loadPhonemizerModule(piperPaths: PiperWorkerConfig["piperPaths"], expectedHash?: string) {
   // The phonemizer glue JS is served alongside the WASM
   const glueUrl = piperPaths.piperJs;
   const response = await fetch(glueUrl);
+  if (!response.ok) throw new Error(`Failed to fetch phonemizer glue: ${response.statusText}`);
   const glueCode = await response.text();
+
+  // Verify Integrity
+  const isIntegrityValid = await verifyIntegrity(glueCode, expectedHash);
+  if (!isIntegrityValid) {
+    throw new Error(`Integrity mismatch for phonemizer glue: ${glueUrl}`);
+  }
   
   // Create module using the legacy global-variable approach commonly used by Emscripten
   const createModule = new Function(glueCode + "; return createPiperPhonemize;")();
@@ -278,7 +305,7 @@ function phonemize(text: string, voice: string) {
   phonemizerModule?.callMain(["-l", voice, "--input", input, "--espeak_data", "/espeak-ng-data"]);
   
   // Use type casting to resolve type inference issues during synchronous Emscripten callback
-  if ((lastPhonemizerOutput as any)?.phoneme_ids) {
+  if (lastPhonemizerOutput && typeof (lastPhonemizerOutput as unknown as Record<string, unknown>).phoneme_ids !== 'undefined') {
     const output = lastPhonemizerOutput as unknown as PhonemizerOutput;
     return {
       phonemeIds: output.phoneme_ids,
@@ -288,10 +315,15 @@ function phonemize(text: string, voice: string) {
   throw new Error("Phonemization failed");
 }
 
-async function runInference(ortInstance: OrtModule, phonemeIds: number[], options: any, speakerId: number) {
+async function runInference(
+  ortInstance: OrtModule, 
+  phonemeIds: number[], 
+  options: { speed?: number }, 
+  speakerId: number
+) {
   const { noise_scale, length_scale, noise_w } = modelConfig!.inference;
   
-  const feeds: Record<string, any> = {
+  const feeds: Record<string, unknown> = {
     input: new ortInstance.Tensor("int64", BigInt64Array.from(phonemeIds.map(BigInt)), [1, phonemeIds.length]),
     input_lengths: new ortInstance.Tensor("int64", BigInt64Array.from([BigInt(phonemeIds.length)])),
     scales: new ortInstance.Tensor("float32", new Float32Array([
@@ -319,10 +351,10 @@ async function runInference(ortInstance: OrtModule, phonemeIds: number[], option
 function resolveSpeakerId(requested: number | undefined, config: ModelConfig): number {
   const speakerCount = Object.keys(config.speaker_id_map).length;
   
-  // Single-speaker model or no speaker requested: always 0
+  // Single-speaker model: always 0 (defaultSpeakerId ignored to prevent out-of-bounds)
   if (speakerCount === 0) return 0;
   
-  const sid = requested ?? 0;
+  const sid = requested ?? defaultSpeakerId;
   
   if (sid < 0 || sid >= speakerCount) {
     warn(`speakerId ${sid} out of range (0-${speakerCount - 1}), falling back to 0`);
@@ -334,4 +366,56 @@ function resolveSpeakerId(requested: number | undefined, config: ModelConfig): n
 
 function postMessage(msg: PiperWorkerMessageOut, options?: StructuredSerializeOptions) {
   self.postMessage(msg, options);
+}
+
+/**
+ * Strips PII (specifically the synthesis 'text') from bubble-up error payloads.
+ */
+function sanitizeErrorPayload(err: unknown): string {
+  if (typeof err === 'string') return err;
+  
+  const errorVal = err instanceof Error ? err.message : String(err);
+  
+  // If the error object contains the original request, scrub the text
+  if (err && typeof err === 'object' && 'originalRequest' in err) {
+    try {
+      const errorWithRequest = err as { originalRequest: PiperWorkerMessageIn };
+      const scrubbed = { ...errorWithRequest.originalRequest };
+      if ('text' in scrubbed) {
+        scrubbed.text = "[REDACTED]";
+      }
+      return `${errorVal} (Request: ${JSON.stringify(scrubbed)})`;
+    } catch {
+      return errorVal;
+    }
+  }
+  
+  return errorVal;
+}
+
+/**
+ * SHA-256 integrity verification.
+ * Returns true if untrusted content matches expected hash.
+ * 
+ * NOTE: crypto.subtle is only available in Secure Contexts (HTTPS/localhost).
+ * If running in an insecure context, this will log a warning and return true.
+ */
+async function verifyIntegrity(content: string, expectedHash: string | undefined): Promise<boolean> {
+  if (!expectedHash) return true;
+  
+  if (!self.crypto || !self.crypto.subtle) {
+    warn("Security verification suspended: crypto.subtle is missing (Insecure Context). Proceeding without integrity check.");
+    return true;
+  }
+
+  const msgUint8 = new TextEncoder().encode(content);
+  const hashBuffer = await self.crypto.subtle.digest('SHA-256', msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  const matches = hashHex === expectedHash.toLowerCase();
+  if (!matches) {
+    error(`Integrity MISMATCH! Expected: ${expectedHash}, Actual: ${hashHex}`);
+  }
+  return matches;
 }

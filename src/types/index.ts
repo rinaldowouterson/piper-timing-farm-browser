@@ -80,6 +80,8 @@ export interface CallbackModuleConfig {
   path: string;
   /** Name of the exported function to invoke on synthesis completion. */
   functionName: string;
+  /** Optional SHA-256 integrity hash for the module. */
+  integrity?: string;
 }
 
 /**
@@ -98,13 +100,14 @@ export interface PiperPaths {
   piperWasm: string;
   piperJs: string;
   piperData: string;
+  /** Mandatory SHA-256 integrity hash for the piperJs glue script. */
+  piperJsSha256: string;
 }
 
 /**
  * Internal worker configuration.
  */
 export interface PiperWorkerConfig {
-	voiceId: string;
 	modelId: string;
 	onnxRuntimePaths: OnnxRuntimePaths;
 	piperPaths: PiperPaths;
@@ -113,13 +116,14 @@ export interface PiperWorkerConfig {
   callbackModule?: CallbackModuleConfig;
   modelSha256?: string;
   configSha256?: string;
+  /** Global default speaker ID for this worker instance. */
+  defaultSpeakerId?: number;
 }
 
 /**
  * Configuration for initializing the Piper farm.
  */
 export interface FarmConfig {
-	voiceId: string;
 	modelId: string;
   /** Optional URLs for the ONNX model and config. */
   modelUrls?: {
@@ -137,6 +141,10 @@ export interface FarmConfig {
   configSha256?: string;
   /** Optional progress callback fired during model download. Receives a snapshot of the download state. */
   onProgress?: (state: DownloadState) => void;
+  /** Global default speaker ID for all workers in the farm. */
+  defaultSpeakerId?: number;
+  /** Custom path to the asset-intercepting Service Worker (e.g. for subpath deployments). */
+  serviceWorkerUrl?: string;
 }
 
 export interface SynthesizeOptions {
@@ -153,7 +161,7 @@ export interface PiperWorkerFarm {
    * Updates the farm with a new model configuration without 
    * destroying workers or clearing the queue. 
    */
-  reinit(config: Pick<FarmConfig, 'voiceId' | 'modelId' | 'modelUrls' | 'callbackModule'>): Promise<void>;
+  reinit(config: Pick<FarmConfig, 'modelId' | 'modelUrls' | 'callbackModule' | 'defaultSpeakerId'>): Promise<void>;
 	synthesize(
 		text: string,
 		options?: SynthesizeOptions
@@ -176,7 +184,7 @@ export interface PiperWorkerFarm {
 
 export type PiperWorkerMessageIn =
 	| { type: "init"; config: PiperWorkerConfig }
-  | { type: "load-callback"; modulePath: string; functionName: string }
+  | { type: "load-callback"; modulePath: string; functionName: string; integrity?: string }
 	| {
 			type: "synthesize";
 			text: string;
@@ -190,7 +198,9 @@ export type PiperWorkerMessageOut =
 	| { type: "ready"; instanceId: number }
 	| { type: "error"; instanceId: number; error: string; originalRequest?: PiperWorkerMessageIn }
   | { type: "log"; payload: WorkerLogPayload }
-	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: any };
+	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: any }
+  | { type: "callback-loaded"; instanceId: number }
+  | { type: "callback-failed"; instanceId: number; error: string };
 
 export interface PiperModelConfig {
 	audio: { sample_rate: number };

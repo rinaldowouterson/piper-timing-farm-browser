@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { generateSidecarHash } from '../utils/resolve-sha256-node';
 
 const __dirname = (import.meta as any).dirname;
 
@@ -29,10 +30,38 @@ async function provision() {
   const defaultDir = isSvelteKit ? 'static/assets' : 'public/assets';
   const targetDir = args[1] || defaultDir;
 
+  if (command === 'hash') {
+    const filePath = args[1];
+    if (!filePath) {
+      console.error('\nError: Please specify a file path to hash.');
+      console.log('Usage: npx piper-farm hash <path-to-file>\n');
+      process.exit(1);
+    }
+
+    const absPath = path.resolve(cwd, filePath);
+    if (!fs.existsSync(absPath)) {
+      console.error(`\nError: File not found at ${absPath}\n`);
+      process.exit(1);
+    }
+
+    try {
+      console.log(`\nCalculating SHA-256 for ${path.relative(cwd, absPath)}...`);
+      const sidecar = generateSidecarHash(absPath);
+      console.log(`  [OK] Hash: ${sidecar.sha256}`);
+      console.log(`  [OK] Created sidecar: ${path.basename(absPath)}.json`);
+      console.log(`  [OK] Timestamp: ${new Date(sidecar.generatedAt).toISOString()}\n`);
+      process.exit(0);
+    } catch (err) {
+      console.error('\nHashing failed:', err);
+      process.exit(1);
+    }
+  }
+
   if (command !== 'init') {
     console.log('\nPiper Timing Farm CLI');
-    console.log('Usage: npx piper-farm init [target-path]');
-    console.log('Default target: ./public/assets\n');
+    console.log('Usage:');
+    console.log('  npx piper-farm init [target-path]  - Provision assets');
+    console.log('  npx piper-farm hash <file-path>    - Generate sidecar integrity hash\n');
     process.exit(0);
   }
 

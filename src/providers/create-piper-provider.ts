@@ -34,6 +34,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   let farm: PiperWorkerFarm | null = null;
   let activeModelId: string | null = null;
   let activeCallbackPath: string | null = null;
+  let activeDefaultSpeakerId: number | undefined = undefined;
   let loadingModelId: string | null = null;
   let lastTransitionId = 0;
   const downloader = createAssetDownloadController();
@@ -51,7 +52,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       // any /assets/* requests are issued. Non-fatal if SW is unsupported.
       if (typeof window !== 'undefined') {
         try {
-          await setupAssetSW();
+          await setupAssetSW(config.serviceWorkerUrl);
         } catch {
           console.warn('[PiperProvider] Asset SW registration failed — falling back to direct asset URLs');
         }
@@ -60,19 +61,21 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       // 1. Initial configuration check
       const isSameModel = activeModelId === modelId;
       const isSameCallback = activeCallbackPath === (callbackModule?.path || null);
+      const isSameSpeaker = activeDefaultSpeakerId === config.defaultSpeakerId;
 
       // If already initialized and configuration matches perfectly, skip
-      if (farm && isSameModel && isSameCallback) return;
+      if (farm && isSameModel && isSameCallback && isSameSpeaker) return;
 
-      // If same model but configuration changed (e.g. callback module), trigger a re-init
-      if (farm && isSameModel && !isSameCallback) {
+      // If same model but configuration changed (e.g. callback or speaker), trigger a re-init
+      if (farm && isSameModel && (!isSameCallback || !isSameSpeaker)) {
         try {
           await farm.reinit({ 
             modelId,
-            voiceId: config.voiceId,
-            callbackModule: callbackModule
+            callbackModule: callbackModule,
+            defaultSpeakerId: config.defaultSpeakerId
           });
           activeCallbackPath = callbackModule?.path || null;
+          activeDefaultSpeakerId = config.defaultSpeakerId;
           return;
         } catch (err) {
           if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -137,9 +140,9 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
           // SHADOW POOL OPTIMIZATION: Non-blocking re-init while queue is running
           await farm.reinit({ 
             modelId, 
-            voiceId: config.voiceId,
             modelUrls: config.modelUrls,
-            callbackModule: config.callbackModule
+            callbackModule: config.callbackModule,
+            defaultSpeakerId: config.defaultSpeakerId
           });
         } catch (err) {
           // Transition was superseded by a newer reinit() — silently return
@@ -155,6 +158,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 
       activeModelId = modelId;
       activeCallbackPath = callbackModule?.path || null;
+      activeDefaultSpeakerId = config.defaultSpeakerId;
       loadingModelId = null;
     },
 

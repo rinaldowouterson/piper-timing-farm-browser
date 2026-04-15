@@ -13,11 +13,11 @@ describe('Parallel FIFO Integrity', () => {
     it('should maintain order across multiple parallel requests', async () => {
         const farm = createPiperWorkerFarm();
         await farm.init({
-            voiceId: 'en_US-bryce-medium',
+
             modelId: 'en_US-bryce-medium',
             cpuInstances: 2,
             onnxRuntimePaths: { wasm: '', mjs: '', mjsHelper: '' },
-            piperPaths: { piperJs: '', piperWasm: '', piperData: '' }
+            piperPaths: { piperJs: '', piperWasm: '', piperData: '' , piperJsSha256: '' }
         });
 
         const p1 = farm.synthesize('Sentence 1');

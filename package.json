@@ -28,6 +28,7 @@
     "dev": "vite",
     "build": "rm -rf dist && vite build",
     "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck",
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

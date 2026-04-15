@@ -11,11 +11,11 @@ describe('PiperWorkerFarm Lifecycle', () => {
     it('should initialize the requested number of workers', async () => {
         const farm = createPiperWorkerFarm();
         const config = {
-            voiceId: 'en_US-bryce-medium',
+
             modelId: 'en_US-bryce-medium',
             cpuInstances: 2,
             onnxRuntimePaths: { wasm: '', mjs: '', mjsHelper: '' },
-            piperPaths: { piperJs: '', piperWasm: '', piperData: '' }
+            piperPaths: { piperJs: '', piperWasm: '', piperData: '' , piperJsSha256: '' }
         };
 
         await farm.init(config);

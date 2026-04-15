@@ -131,10 +131,10 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
 
       const piperConfig = {
         modelId: config.modelId,
-        voiceId: config.voiceId,
         onnxRuntimePaths,
         piperPaths,
-        callbackModule: config.callbackModule
+        callbackModule: config.callbackModule,
+        defaultSpeakerId: config.defaultSpeakerId
       };
       const cpuInstances = config.cpuInstances ?? 2;
       await pool.init(piperConfig, cpuInstances);

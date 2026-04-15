@@ -16,9 +16,10 @@ import type {
 
 function removeUndefined<T extends object>(obj: T): T {
   const result = { ...obj };
-  Object.keys(result).forEach(key => {
-    if ((result as any)[key] === undefined) {
-      delete (result as any)[key];
+  const keys = Object.keys(result) as Array<keyof T>;
+  keys.forEach(key => {
+    if (result[key] === undefined) {
+      delete result[key];
     }
   });
   return result;
@@ -26,19 +27,25 @@ function removeUndefined<T extends object>(obj: T): T {
 
 function isConfigSame(a: PiperWorkerConfig, b: PiperWorkerConfig): boolean {
   return a.modelId === b.modelId && 
-         a.voiceId === b.voiceId && 
+         a.defaultSpeakerId === b.defaultSpeakerId &&
          JSON.stringify(a.onnxRuntimePaths) === JSON.stringify(b.onnxRuntimePaths) &&
          JSON.stringify(a.piperPaths) === JSON.stringify(b.piperPaths) &&
          JSON.stringify(a.callbackModule) === JSON.stringify(b.callbackModule);
 }
 
 function isSurgicalCandidate(oldConfig: PiperWorkerConfig, newConfig: PiperWorkerConfig): boolean {
-  // Candidate for surgical update if ONLY callbackModule changed
-  return oldConfig.modelId === newConfig.modelId &&
-         oldConfig.voiceId === newConfig.voiceId &&
-         JSON.stringify(oldConfig.onnxRuntimePaths) === JSON.stringify(newConfig.onnxRuntimePaths) &&
-         JSON.stringify(oldConfig.piperPaths) === JSON.stringify(newConfig.piperPaths) &&
-         JSON.stringify(oldConfig.callbackModule) !== JSON.stringify(newConfig.callbackModule);
+  // Candidate for surgical update if ONLY callbackModule or defaultSpeakerId changed
+  // (Both are lightweight worker-side state updates)
+  const isCoreSame = oldConfig.modelId === newConfig.modelId &&
+                     JSON.stringify(oldConfig.onnxRuntimePaths) === JSON.stringify(newConfig.onnxRuntimePaths) &&
+                     JSON.stringify(oldConfig.piperPaths) === JSON.stringify(newConfig.piperPaths);
+  
+  if (!isCoreSame) return false;
+
+  const isCallbackChanged = JSON.stringify(oldConfig.callbackModule) !== JSON.stringify(newConfig.callbackModule);
+  const isSpeakerChanged = oldConfig.defaultSpeakerId !== newConfig.defaultSpeakerId;
+
+  return isCallbackChanged || isSpeakerChanged;
 }
 export function createWorkerPool(
   onReady: (id: number) => void, 
@@ -54,6 +61,11 @@ export function createWorkerPool(
   let currentConfig: PiperWorkerConfig | null = null;
   let pendingTransition: { abort: () => void; shadowPool: WorkerState[] } | null = null;
   let activeInit: Promise<void> | null = null;
+  const pendingCallbackLoads = new Map<number, { 
+    resolve: () => void; 
+    reject: (error: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }>();
 
   return {
     async init(config: PiperWorkerConfig, count: number) {
@@ -68,7 +80,7 @@ export function createWorkerPool(
           currentConfig = config;
           activeModelId = config.modelId;
           targetModelId = config.modelId;
-          targetSpeakerId = 0;
+          targetSpeakerId = config.defaultSpeakerId || 0;
           isInitialized = true;
 
           const initPromises = [];
@@ -77,7 +89,7 @@ export function createWorkerPool(
             const worker = createWorker(id, config, (msg) => {
               if (msg.type === 'ready') onReady(msg.instanceId);
               else onResult(msg);
-            }, onLog);
+            }, onLog, pendingCallbackLoads);
             workers.push(worker);
             initPromises.push(new Promise<void>((res, rej) => {
               const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
@@ -127,6 +139,7 @@ export function createWorkerPool(
       // 1. Idempotency Check: Skip if requested config is identical to current
       if (isConfigSame(currentConfig, newConfig)) {
         targetModelId = newConfig.modelId; // Ensure target is synced
+        targetSpeakerId = newConfig.defaultSpeakerId || 0;
         onLog({
           level: 'info',
           message: `[WorkerPool] Idempotent reinit detected for model: ${newConfig.modelId}. Skipping.`,
@@ -143,6 +156,11 @@ export function createWorkerPool(
         pendingTransition = null;
       }
 
+      // Optimistic Target Update: New requests added to the queue during 
+      // the transition should use the NEW target model and speaker.
+      targetModelId = newConfig.modelId;
+      targetSpeakerId = newConfig.defaultSpeakerId || 0;
+
       // 3. Path A: Surgical Bypass for callback-only updates
       if (isSurgicalCandidate(currentConfig, newConfig)) {
         onLog({
@@ -151,18 +169,54 @@ export function createWorkerPool(
           workerId: -1,
           timestamp: Date.now()
         });
-        workers.forEach(w => {
-          w.worker.postMessage({
-            type: "load-callback",
-            modulePath: newConfig.callbackModule!.path,
-            functionName: newConfig.callbackModule!.functionName
+
+        const callbackModule = newConfig.callbackModule!;
+        
+        try {
+          const loadPromises = workers.map(w => {
+            return new Promise<void>((resolve, reject) => {
+              // 1. Setup pending confirmation entry with 5 second timeout
+              const timeout = setTimeout(() => {
+                const pending = pendingCallbackLoads.get(w.id);
+                if (pending) {
+                  pendingCallbackLoads.delete(w.id);
+                  reject(new Error(`Worker ${w.id} callback load timed out after 5s`));
+                }
+              }, 5000);
+
+              pendingCallbackLoads.set(w.id, { resolve, reject, timeout });
+
+              // 2. Dispatch surgical update
+              w.worker.postMessage({
+                type: "load-callback",
+                modulePath: callbackModule.path,
+                functionName: callbackModule.functionName,
+                integrity: callbackModule.integrity
+              });
+            });
           });
-        });
-        currentConfig = newConfig;
-        return;
+
+          // Wait for all workers to confirm atomic success
+          await Promise.all(loadPromises);
+          currentConfig = newConfig;
+          return;
+        } catch (err) {
+          onLog({
+            level: 'warn',
+            message: `[WorkerPool] Path A (Surgical) failed or timed out: ${err instanceof Error ? err.message : String(err)}. Falling back to Path B (Full Hotswap).`,
+            workerId: -1,
+            timestamp: Date.now()
+          });
+          // CLEANUP: If we failed, make sure any remaining pending loads are cleared
+          pendingCallbackLoads.forEach((val, id) => {
+            clearTimeout(val.timeout);
+            pendingCallbackLoads.delete(id);
+          });
+          // Fall through to Path B
+        }
       }
 
-      // 4. Path B: Full Hotswap (Shadow Pool) for core asset changes
+      // 4. Path B: Full Hotswap (Shadow Pool) for core asset changes or Path A recovery
       onLog({
         level: 'info',
         message: `[WorkerPool] Choosing Path B (Hotswap): Configuration mismatch detected. Spawning shadow pool...`,
@@ -188,7 +242,7 @@ export function createWorkerPool(
         const worker = createWorker(id, newConfig, (msg) => {
           if (msg.type === 'ready') onReady(msg.instanceId);
           else onResult(msg);
-        }, onLog);
+        }, onLog, pendingCallbackLoads);
         shadowPool.push(worker);
         initPromises.push(new Promise<void>((res, rej) => {
           const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
@@ -275,7 +329,7 @@ export function createWorkerPool(
         } else {
           onResult(msg);
         }
-      }, onLog);
+      }, onLog, pendingCallbackLoads);
       replacement.transitioning = true;
 
       // 4. Swap into the same array position to maintain pool size
@@ -283,6 +337,9 @@ export function createWorkerPool(
     },
 
     getNextAvailable(): WorkerState | null {
+      // Don't dispatch while callbacks are loading (Path A blocking)
+      if (pendingCallbackLoads.size > 0) return null;
+      
       return workers.find(w => !w.busy && !w.transitioning) || null;
     },
 
@@ -295,6 +352,8 @@ export function createWorkerPool(
       }
       workers.forEach(w => w.worker.terminate());
       workers.length = 0;
+      pendingCallbackLoads.forEach(l => clearTimeout(l.timeout));
+      pendingCallbackLoads.clear();
       isInitialized = false;
       activeModelId = null;
       targetModelId = null;
@@ -317,7 +376,8 @@ function createWorker(
   id: number, 
   config: PiperWorkerConfig, 
   onMessage: (msg: PiperWorkerMessageOut) => void,
-  onLog: (log: WorkerLogPayload) => void
+  onLog: (log: WorkerLogPayload) => void,
+  pendingCallbackLoads: Map<number, { resolve: () => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }>
 ): WorkerState {
   // Use Vite-safe worker instantiation if possible, otherwise use new URL
   const worker = new Worker(new URL("../worker/process-piper-synthesis.worker.ts", import.meta.url), {
@@ -327,10 +387,25 @@ function createWorker(
   });
 
   worker.onmessage = (e: MessageEvent<PiperWorkerMessageOut>) => {
-    if (e.data.type === 'log') {
-      onLog(e.data.payload);
+    const msg = e.data;
+    if (msg.type === 'log') {
+      onLog(msg.payload);
+    } else if (msg.type === 'callback-loaded') {
+      const pending = pendingCallbackLoads.get(id);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pendingCallbackLoads.delete(id);
+        pending.resolve();
+      }
+    } else if (msg.type === 'callback-failed') {
+      const pending = pendingCallbackLoads.get(id);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        pendingCallbackLoads.delete(id);
+        pending.reject(new Error(msg.error));
+      }
     } else {
-      onMessage(e.data);
+      onMessage(msg);
     }
   };
   worker.onerror = (e) => {

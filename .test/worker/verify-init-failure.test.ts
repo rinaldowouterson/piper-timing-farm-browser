@@ -5,9 +5,9 @@ import { PiperWorkerConfig } from '../../src/types';
 describe('Worker Pool Initialization Rejection', () => {
   const mockConfig: PiperWorkerConfig = {
     modelId: 'test-model',
-    voiceId: 'test-voice',
+
     onnxRuntimePaths: { mjs: '', wasm: '' },
-    piperPaths: { piperJs: '', piperWasm: '', piperData: '' },
+    piperPaths: { piperJs: '', piperWasm: '', piperData: '' , piperJsSha256: '' },
     instanceId: 0
   };
 

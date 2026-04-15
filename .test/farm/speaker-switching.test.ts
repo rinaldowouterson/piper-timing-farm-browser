@@ -13,11 +13,11 @@ describe('Speaker Switching (Scenario A)', () => {
     it('should pass different speakerIds through to results', async () => {
         const farm = createPiperWorkerFarm();
         await farm.init({
-            voiceId: 'en_US-libritts-high',
+
             modelId: 'en_US-libritts-high',
             cpuInstances: 2,
             onnxRuntimePaths: { wasm: '', mjs: '', mjsHelper: '' },
-            piperPaths: { piperJs: '', piperWasm: '', piperData: '' }
+            piperPaths: { piperJs: '', piperWasm: '', piperData: '' , piperJsSha256: '' }
         });
 
         const p1 = farm.synthesize('Hello', { speakerId: 0 });
@@ -41,11 +41,11 @@ describe('Speaker Switching (Scenario A)', () => {
     it('should default speakerId to 0 when omitted', async () => {
         const farm = createPiperWorkerFarm();
         await farm.init({
-            voiceId: 'en_US-bryce-medium',
+
             modelId: 'en_US-bryce-medium',
             cpuInstances: 1,
             onnxRuntimePaths: { wasm: '', mjs: '', mjsHelper: '' },
-            piperPaths: { piperJs: '', piperWasm: '', piperData: '' }
+            piperPaths: { piperJs: '', piperWasm: '', piperData: '' , piperJsSha256: '' }
         });
 
         const result = await farm.synthesize('No speaker specified');

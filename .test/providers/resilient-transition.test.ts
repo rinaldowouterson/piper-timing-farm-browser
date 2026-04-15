@@ -19,7 +19,7 @@ describe('Resilient Model Transition Test', () => {
         
         // 1. Initial Load: Bryce
         await provider.init({
-            voiceId: 'en_US-bryce-medium',
+
             modelId: 'en_US-bryce-medium',
             cpuInstances: 2
         });
@@ -31,7 +31,7 @@ describe('Resilient Model Transition Test', () => {
         // 3. RAPID SWITCH (Stress Test Transition)
         // Transition to Ukrainian while Bryce is still processing
         const switchPromise = provider.init({
-            voiceId: 'uk_UA-ukrainian_tts-medium',
+
             modelId: 'uk_UA-ukrainian_tts-medium',
             cpuInstances: 2
         });

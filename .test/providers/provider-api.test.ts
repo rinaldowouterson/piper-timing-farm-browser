@@ -38,7 +38,7 @@ describe('Provider API', () => {
             
             // Init triggers download controller activity
             await provider.init({
-                voiceId: 'en_US-bryce-medium',
+
                 modelId: 'en_US-bryce-medium',
                 cpuInstances: 2
             });
@@ -71,7 +71,7 @@ describe('Provider API', () => {
             
             // Initialize first
             await provider.init({
-                voiceId: 'en_US-bryce-medium',
+
                 modelId: 'en_US-bryce-medium',
                 cpuInstances: 2
             });
@@ -115,7 +115,7 @@ describe('Provider API', () => {
             const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
             
             await provider.init({
-                voiceId: 'en_US-bryce-medium',
+
                 modelId: 'en_US-bryce-medium',
                 cpuInstances: 2
             });
@@ -134,7 +134,7 @@ describe('Provider API', () => {
         it('should cancel specific synthesis via AbortSignal', async () => {
             const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
             await provider.init({
-                voiceId: 'en_US-bryce-medium',
+
                 modelId: 'en_US-bryce-medium',
                 cpuInstances: 2
             });
@@ -150,7 +150,7 @@ describe('Provider API', () => {
         it('should clear remaining queue via cancelAllSynthesis', async () => {
             const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
             await provider.init({
-                voiceId: 'en_US-bryce-medium',
+
                 modelId: 'en_US-bryce-medium',
                 cpuInstances: 2
             });

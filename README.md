@@ -9,13 +9,12 @@ High-performance, multi-threaded Piper TTS engine for the browser. Features fram
 
 ## Table of Contents
 
+- [Migration Guide (Breaking Changes)](#migration-guide-breaking-changes)
 - [Overview](#overview)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [Unified Asset Delivery](#unified-asset-delivery)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
 - [Core Features](#core-features)
   - [Parallel FIFO Sequencer](#parallel-fifo-sequencer)
   - [Model Switching Lifecycle](#model-switching-lifecycle)
@@ -23,12 +22,36 @@ High-performance, multi-threaded Piper TTS engine for the browser. Features fram
   - [Download Controller](#download-controller)
   - [Speaker ID Support](#speaker-id-support)
   - [Worker-Thread Callbacks](#worker-thread-callbacks)
+- [Security & Privacy](#security--privacy)
 - [API Reference](#api-reference)
 - [CLI: Asset Provisioning](#cli-asset-provisioning)
 - [Model Registry](#model-registry)
 - [Low-Latency Implementation Details](#low-latency-implementation-details)
+- [Advanced Debugging & Troubleshooting](#advanced-debugging--troubleshooting)
 - [Browser Requirements](#browser-requirements)
 - [Type Definitions](#type-definitions)
+
+---
+
+## Migration Guide (Breaking Changes)
+
+This version introduces "Zero-Debt" API refactoring focused on security and clarity.
+
+### 1. `voiceId` Removed
+The `voiceId` field was redundant since `modelId` is the primary identifier. 
+- **Action**: Remove `voiceId` from your `init()` and `reinit()` configuration.
+
+### 2. Global `defaultSpeakerId` Added
+Replaces the need for per-request speaker selection in multi-speaker models.
+- **Action**: Pass `defaultSpeakerId: N` in `FarmConfig` to set the farm-wide default speaker.
+
+### 3. Mandatory SRI for Worker Glue
+`piperJsSha256` is now **mandatory** in `PiperPaths`. This ensures the phonemizer glue code is always verified before execution.
+- **Action**: If you provide custom `piperPaths`, ensure `piperJsSha256` is included. The default `PIPER_ASSET_URLS` already includes the verified hash for matching versions.
+
+### 4. `serviceWorkerUrl` for Subpaths
+Enables deployments in non-root environments (e.g., GitHub Pages).
+- **Action**: Use `serviceWorkerUrl: "/repo-name/control-asset-sw.js"` if your app is not at the domain root.
 
 ---
 
@@ -77,6 +100,23 @@ npm install onnxruntime-web
 
 This ensures that everything "just works" out of the box, while naturally optimizing for performance on the second run.
 
+#### Same-Origin Scope
+
+The Service Worker **only intercepts same-origin requests**. This is a critical security boundary:
+
+```typescript
+// control-asset-sw.ts — fetch event handler
+if (url.origin !== sw.location.origin) return;  // Skip cross-origin
+if (!url.pathname.startsWith('/assets/')) return;  // Only intercept /assets/*
+```
+
+**Implications:**
+- **CDN fallback** works because the Service Worker performs the cross-origin fetch internally (SW context has broader fetch permissions than main thread)
+- **Cross-origin model URLs** (e.g., direct HuggingFace URLs passed in `modelUrls`) bypass the Service Worker entirely and go straight to network
+- **Security benefit**: Your app's existing cross-origin API calls, analytics, and third-party scripts are never intercepted
+
+**Implementation:** See [`control-asset-sw.ts`](src/control-asset-sw.ts:59-61) for the origin check logic.
+
 ### Why host assets locally?
 
 While the Library automatically falls back to a global CDN, hosting assets yourself is recommended for:
@@ -96,7 +136,7 @@ npx piper-farm init
 This CLI command:
 - **Intelligent Detection**: Automatically targets SvelteKit (`static/assets`) or Vite/React/Next.js (`public/assets`).
 - **Sourcing**: Pulls binaries directly from the package's internal `dist/assets/` folder to ensure version-locked results.
-- **Service Worker**: The library automatically registers `dist/control-asset-sw.js` to orchestrate the OPFS -> Local -> CDN resolution chain.
+- **Service Worker**: The library automatically registers `dist/control-asset-sw.js` during `provider.init()` to orchestrate the OPFS -> Local -> CDN resolution chain. Zero manual setup is required.
 
 ---
 
@@ -110,7 +150,7 @@ const provider = createPiperProvider();
 // Initialize the farm
 await provider.init({
   modelId: "en_US-bryce-medium", // or use PIPER_MODELS to find one
-  voiceId: "en_US-bryce-medium",
+  defaultSpeakerId: 0,           // Optional: Global default speaker for the model
   cpuInstances: 2, 
   onProgress: (state) => {
     console.log(`Downloading: ${(state.progress * 100).toFixed(1)}%`);
@@ -124,9 +164,18 @@ const result = await provider.synthesize("Hello, world!", {
   volume: 0.9,
 });
 
-// The library always returns the ID (even if it generated it for you)
-console.log(result.requestId); // "msg-001"
-const durations = result.metadata.durations; 
+// --- Playing the Audio ---
+const ctx = new AudioContext();
+const buffer = ctx.createBuffer(1, result.audioData.length, result.sampleRate);
+buffer.getChannelData(0).set(result.audioData);
+
+const source = ctx.createBufferSource();
+source.buffer = buffer;
+source.connect(ctx.destination);
+source.start();
+
+console.log(`Duration: ${result.durationMs}ms`);
+const durations = result.metadata.durations; // Phoneme-level timing
 ```
 
 ---
@@ -251,6 +300,38 @@ function processQueue() {
 
 ---
 
+### Queue Observability
+
+The library provides a granular observability API to track synthesis requests as they move through the farm. This is ideal for building advanced progress bars or "current task" UI indicators.
+
+```typescript
+const provider = createPiperProvider();
+
+const unsubscribe = provider.onQueueStatus((payload) => {
+  const { requestId, text, state, modelId, error } = payload;
+  
+  switch(state) {
+    case 'queued':      console.log(`Request ${requestId} is waiting for a worker...`); break;
+    case 'processing':  console.log(`Request ${requestId} is currently synthesizing...`); break;
+    case 'completed':   console.log(`Request ${requestId} finished successfully.`); break;
+    case 'cancelled':   console.log(`Request ${requestId} was aborted.`); break;
+    case 'error':       console.error(`Request ${requestId} failed: ${error}`); break;
+  }
+});
+
+// Later...
+unsubscribe();
+```
+
+**State Lifecycle:**
+1.  **`queued`**: Request accepted by the farm and assigned to the FIFO queue.
+2.  **`processing`**: Request assigned to an idle worker; WASM inference has begun.
+3.  **`completed`**: Synthesis finished, result transferred to main thread.
+4.  **`cancelled`**: Request was explicitly cancelled via `cancelSynthesis()`.
+5.  **`error`**: Worker crashed or synthesis failed (PII redacted).
+
+---
+
 ### Model Switching Lifecycle
 
 Switching models involves two strictly sequential phases. **Phase 1 must fully complete before Phase 2 begins** — the library never allocates WebAssembly memory until model files are 100% present in OPFS.
@@ -307,17 +388,51 @@ Only after the model files are fully cached does the library create a **Shadow P
 
 **Implementation:** See `reinit()` in [`control-worker-pool.ts`](src/farm/control-worker-pool.ts) for the supersession mechanism, and `init()` in [`create-piper-provider.ts`](src/providers/create-piper-provider.ts) for the stale-check and download-first gate.
 
+#### Path A: Surgical Re-initialization (Low-Latency)
+If you only update the `callbackModule` but keep the same model, the farm performs a **Surgical Re-initialization**. Instead of destroying worker threads, it dynamically imports the new callback script into the existing active workers. This avoids the overhead of reloading the ONNX model and WASM engine into memory.
+
+#### Path B: Shadow Pool Hotswap (Heavy)
+If the model or core WASM assets change, the library spawns a completely new **Shadow Pool**. This shadow pool initializes in the background and atomically replaces the active pool only once all workers are `ready`.
+
+#### Self-Healing Workers
+During **Granular Cancellation** (using `AbortSignal`), if a worker is deep inside an uninterruptible WASM inference loop, the farm forcefully terminates that specific worker thread and spawns a fresh replacement. This ensures the poll remains responsive even if a task is cancelled mid-inference.
+
 ---
 
 ### OPFS Read-Through Cache
 
 All model and WASM assets are cached in the **Origin Private File System (OPFS)** for persistence across sessions:
 
-1. **Check OPFS + `.meta` marker** — If asset exists with a verified SHA-256 marker, return immediately (zero-latency fast-path)
-2. **Auto-fetch SHA-256 (HuggingFace)** — If SHA-256 not provided and URL is from HuggingFace, fetch hash from HF API (`lfs.oid` field)
-3. **Fetch from network** — If missing or marker mismatch, download fresh (clean start, no partial resumption)
-4. **Verify SHA-256** — Integrity check is **mandatory**; on success, a `.meta` marker is written for instant future loads
-5. **Write to OPFS** — Stream directly to filesystem (zero RAM buffering, even for 30MB+ models)
+#### Sticky Infrastructure (Directory Separation)
+
+The library maintains two separate OPFS directories to optimize cache management:
+
+| Directory   | Contents                          | Cleared by `clearPiperModelCache()` |
+|-------------|-----------------------------------|-------------------------------------|
+| **`voices/`** | Model weights (`.onnx`, `.onnx.json`) | ✅ Yes — surgical purge of user models |
+| **`infra/`**  | Engine binaries (WASM, glue JS)   | ❌ No — preserved for instant reload |
+
+**Why this matters:** When you call [`provider.clearPiperModelCache()`](src/utils/resolve-cache-clearing.ts), only the `voices/` directory is deleted. The core Piper WASM engine (~17MB) and ONNX Runtime binaries (~12MB) remain cached in `infra/`. This means:
+
+- **First session**: Download all assets (~30MB total)
+- **After cache clear**: Only re-download model weights (~5-15MB per model)
+- **Subsequent sessions**: Instant load from OPFS (~50ms)
+
+This "sticky infrastructure" pattern ensures that cache purges for model corruption or voice switching don't sacrifice the performance of core engine binaries.
+
+**Implementation:** See [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts) for the surgical `voices/` deletion logic.
+
+#### Read-Through Resolution Chain
+
+1. **Check OPFS + `.meta` marker** — If asset exists with a verified SHA-256 marker, return immediately (zero-latency fast-path).
+2. **Auto-fetch SHA-256 (HuggingFace)** — If SHA-256 not provided and URL is from HuggingFace, fetch hash from HF API (`lfs.oid` field).
+3. **Fetch from network** — If missing or marker mismatch, stream the asset from the network.
+4. **Atomic RAM Buffering** — The asset is downloaded into a temporary RAM buffer first.
+5. **Verify SHA-256** — Integrity check is performed **in memory** before any data is written to the filesystem. This guarantees that OPFS never contains partial or corrupted binaries.
+6. **Write to OPFS** — Once verified, the buffer is persisted to OPFS and a `.meta` marker is written for instant future loads.
+
+> [!TIP]
+> **Performance Optimization**: Progress updates during download are throttled to **100ms** intervals. This prevents high-frequency UI re-renders from saturating the main thread during high-speed gigabit downloads.
 
 > [!IMPORTANT]
 > **SHA-256 is mandatory for integrity verification.** This prevents serving partial/corrupted files that cause `ERROR_CODE 7` (protobuf parsing failed).
@@ -438,10 +553,10 @@ const state = provider.getDownloadState();
 **Progress Callback (Push):**
 
 ```typescript
-// Real-time updates for the active download — ideal for a single loading bar
+// Real-time updates for the active download — ideal for a loading bar
 await provider.init({
   modelId: "en_US-bryce-medium",
-  voiceId: "en_US-bryce-medium",
+  defaultSpeakerId: 0,
   onProgress: (state) => {
     console.log(`${state.modelId}: ${(state.progress * 100).toFixed(1)}%`);
   },
@@ -474,7 +589,7 @@ Since downloads proceed in FIFO order, you can "prioritize" a model by canceling
 await provider.cancelDownload("en_US-model-a");
 await provider.cancelDownload("en_US-model-b");
 // Now Model C will start downloading immediately when requested
-await provider.init({ modelId: "en_US-model-c", voiceId: "en_US-model-c" });
+await provider.init({ modelId: "en_US-model-c", defaultSpeakerId: 0 });
 ```
 
 > [!TIP]
@@ -494,11 +609,15 @@ await provider.synthesize("Hello");
 await provider.synthesize("Hello", { speakerId: 42 });
 ```
 
-**Validation:** Invalid speaker IDs fall back to 0 with a warning:
+**Validation:** Invalid speaker IDs fall back to `defaultSpeakerId` (which itself defaults to 0). Output results include the actual ID used.
+
+**Global Default:** You can set the speaker once at initialization:
 
 ```typescript
-// Worker logs: "speakerId 999 out of range (0-903), falling back to 0"
-await provider.synthesize("Hello", { speakerId: 999 });
+await provider.init({
+  modelId: 'en_US-libritts-high',
+  defaultSpeakerId: 42 // All synthesis will use speaker 42 by default
+});
 ```
 
 **Implementation:** See `resolveSpeakerId()` in [`process-piper-synthesis.worker.ts`](src/worker/process-piper-synthesis.worker.ts).
@@ -538,7 +657,6 @@ For lipsync/viseme applications, you can inject a callback module that runs **in
 ```typescript
 await provider.init({
   modelId: "en_US-bryce-medium",
-  voiceId: "en_US-bryce-medium",
   cpuInstances: 2,
   callbackModule: {
     path: "/js/my-viseme-processor.js",
@@ -582,6 +700,29 @@ postMessage(
   },
 );
 ```
+
+---
+
+## Security & Privacy
+
+### Worker Security & Integrity (SRI)
+
+`piper-timing-farm` implements strict **Subresource Integrity** verification for code loaded into the worker thread.
+
+1.  **Phonemizer Glue**: You must provide a `piperJsSha256` in your `PiperPaths` to verify the `piper_phonemize.js` glue script. This is now **mandatory** to prevent execution of tampered engine code.
+2.  **Worker Callbacks**: Custom callback modules can include an `integrity` hash. The worker will `fetch` the module and verify its SHA-256 hash before performing a dynamic `import()`.
+
+**How it works:**
+- The worker uses `self.crypto.subtle.digest('SHA-256', ...)` for verification.
+- **Fail-Safe**: If the hash mismatches, the worker will throw an `Integrity mismatch` error and refuse to execute the code.
+- **Insecure Contexts**: Since `crypto.subtle` is only available in Secure Contexts (HTTPS/localhost), integrity checks are suspended in insecure environments with a console warning.
+
+### Privacy & PII Safety
+
+To prevent accidental leakage of sensitive user data (Personally Identifiable Information) into error logs or telemetry systems, the library implements automatic **PII Redaction**:
+
+- **Error Payloads**: If a synthesis request fails, the worker redacts the input `text` field from the error message that bubbles up to the main thread.
+- **Redaction Template**: `{ error: "...", originalRequest: { text: "[REDACTED]", ... } }`
 
 ---
 
@@ -632,6 +773,10 @@ provider.isInitialized(): boolean;
 provider.getActiveModelId(): string | null;
 provider.getDownloadState(): Map<string, DownloadState>;
 provider.metrics: { queueLength, busyWorkers, totalWorkers };
+
+// Events
+provider.onQueueStatus(listener: (status: RequestStatusPayload) => void): () => void;
+provider.onLog(listener: (log: WorkerLogPayload) => void): () => void;
 ```
 
 ### `createPiperWorkerFarm()`
@@ -646,6 +791,7 @@ await farm.init(config: FarmConfig);
 await farm.reinit(config);
 await farm.synthesize(text, options);
 await farm.clearPiperModelCache();
+farm.onLog((log) => console.log(`[Worker ${log.workerId}] ${log.message}`));
 farm.terminate();
 farm.prepareTransition(targetModelId);
 
@@ -659,7 +805,6 @@ farm.metrics: { queueLength, busyWorkers, totalWorkers };
 
 ```typescript
 interface FarmConfig {
-  voiceId: string; // Voice identifier (usually matches modelId)
   modelId: string; // Model identifier (e.g., 'en_US-bryce-medium')
   cpuInstances?: number; // Number of parallel workers (default: 2)
   modelUrls?: {
@@ -673,6 +818,14 @@ interface FarmConfig {
   modelSha256?: string; // Optional: SHA-256 for model integrity
   configSha256?: string; // Optional: SHA-256 for config integrity
   onProgress?: (state: DownloadState) => void; // Optional: Download progress callback
+  defaultSpeakerId?: number; // Optional: Global speaker selection for multi-speaker models
+  serviceWorkerUrl?: string; // Optional: Custom path to Service Worker (for subpath deployments)
+}
+
+interface CallbackModuleConfig {
+  path: string; // Path to the JavaScript module
+  functionName: string; // Name of the exported function
+  integrity?: string; // Optional: SHA-256 integrity hash
 }
 ```
 
@@ -708,6 +861,7 @@ interface PiperPaths {
   piperWasm: string; // Path to piper_phonemize.wasm
   piperJs: string; // Path to piper_phonemize.js
   piperData: string; // Path to piper_phonemize.data
+  piperJsSha256?: string; // Optional: SHA-256 for piperJs integrity
 }
 ```
 
@@ -743,6 +897,17 @@ interface PiperMetadata {
 ### `npx piper-farm init [target-path]`
 
 Provisions WASM and binary assets to your project's static directory.
+
+### `npx piper-farm hash <file-path>`
+
+Generates a sidecar `.json` integrity hash for a binary asset. This is used for **Subresource Integrity (SRI)** verification when loading custom callback modules or phonemizer glue scripts.
+
+**Example:**
+```bash
+npx piper-farm hash public/assets/my-callback.js
+# [OK] Hash: 5e884898da28...
+# [OK] Created sidecar: my-callback.js.json
+```
 
 **Framework Detection:**
 
@@ -911,6 +1076,112 @@ To prevent Out-of-Memory (OOM) crashes on low-end devices, the library avoids bu
 
 ---
 
+## Advanced Debugging & Troubleshooting
+
+### Service Worker Bypass
+
+When debugging asset loading issues, you can bypass the Service Worker interception by adding a query parameter:
+
+```text
+https://yourdomain.com/assets/piper_phonemize.wasm?bypass-sw=true
+```
+
+**Implementation:** The Service Worker checks for `bypass-sw` in [`control-asset-sw.ts`](src/control-asset-sw.ts:56-57):
+
+```typescript
+// Bypass mechanism for debugging: ?bypass-sw=true
+if (url.searchParams.has('bypass-sw')) return;
+```
+
+**Use Cases:**
+- **Force network fetch**: Test CDN connectivity without OPFS cache interference
+- **Debug 404s**: Verify your local `/assets/` folder is correctly provisioned
+- **Hot-reload testing**: Check if updated assets are being served correctly
+
+> [!WARNING]
+> Bypassing the Service Worker will **not** write assets to OPFS. Use only for debugging; production requests should always go through the SW for caching.
+
+### Worker Naming in DevTools
+
+Each worker is assigned a sequential ID (`PiperWorker-0`, `PiperWorker-1`, etc.) that appears in Chrome DevTools' **Application → Workers** panel:
+
+```typescript
+// process-piper-synthesis.worker.ts
+const PREFIX = () => `[PiperWorker:${instanceId}:${deviceLabel}]`;
+```
+
+**DevTools Profiling Tips:**
+1. **Console Filtering**: Search for `[PiperWorker:0]` to isolate logs from a specific worker
+2. **Performance Profile**: Each worker thread is labeled in the timeline view
+3. **Memory Snapshots**: Workers are listed individually in the heap snapshot selector
+
+**Worker Lifecycle Events:**
+```text
+[PiperWorker:0:CPU] Initializing with model: en_US-bryce-medium
+[PiperWorker:0:CPU] ONNX session created
+[PiperWorker:0:CPU] Ready
+[PiperWorker:0:CPU] Synthesizing: "Hello, world!"
+[PiperWorker:0:CPU] Synthesis complete (234ms)
+```
+
+### Secure Contexts (HTTPS/localhost) — Hard Requirement for SRI
+
+**Subresource Integrity (SRI) verification requires a Secure Context.** The `crypto.subtle.digest()` API is only available when:
+
+| Environment | `crypto.subtle` Available | SRI Verification |
+|-------------|---------------------------|------------------|
+| `https://*` | ✅ Yes                    | ✅ Active         |
+| `http://localhost` | ✅ Yes (dev exemption) | ✅ Active         |
+| `http://127.0.0.1` | ✅ Yes (dev exemption) | ✅ Active         |
+| `http://192.168.x.x` | ❌ No (insecure)    | ⚠️ Suspended      |
+| `http://production.com` | ❌ No (insecure)  | ⚠️ Suspended      |
+
+**Behavior in Insecure Contexts:**
+
+```typescript
+// process-piper-synthesis.worker.ts
+if (!self.crypto || !self.crypto.subtle) {
+  warn("Security verification suspended: crypto.subtle is missing (Insecure Context). Proceeding without integrity check.");
+  return true; // Fail-open: allow execution without verification
+}
+```
+
+The library **fails open** in insecure contexts with a console warning. This prevents hard failures on development setups that don't meet Secure Context criteria, but **production deployments must use HTTPS**.
+
+> [!IMPORTANT]
+> **Production Requirement:** All production deployments must serve pages over HTTPS. Insecure HTTP deployments will:
+> - Skip integrity verification for callback modules
+> - Log a warning on every worker initialization
+> - Potentially execute unverified third-party code
+
+### Cross-Origin Isolation (COOP/COEP) — Multi-Threading Considerations
+
+The library uses **single-threaded workers** (`numThreads = 1`) by default, which works in all browsers without special headers:
+
+```typescript
+ortInstance.env.wasm.numThreads = 1; // No SharedArrayBuffer required
+```
+
+**However, if you want to enable multi-threaded ONNX inference** (not recommended for this library's worker pool architecture), you would need:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+**Troubleshooting COOP/COEP Issues:**
+
+| Symptom | Cause | Solution |
+|---------|-------|----------|
+| `SharedArrayBuffer is not defined` | Missing COOP/COEP headers | Add headers or keep `numThreads=1` |
+| Worker fails to load external scripts | COEP blocks cross-origin resources | Use `crossorigin` attribute on `<script>` tags |
+| CDN fetch fails in SW | COEP applies to Service Worker | Ensure CDN resources have CORS headers |
+
+> [!TIP]
+> **Recommended Configuration:** Keep the default single-threaded workers. The worker pool already provides parallelism at the orchestration level, making internal ONNX threading redundant and potentially harmful to performance.
+
+---
+
 ## Browser Requirements
 
 ### Required APIs
@@ -919,7 +1190,7 @@ To prevent Out-of-Memory (OOM) crashes on low-end devices, the library avoids bu
 | -------------------- | ---------------------- | -------------------------------------- |
 | Web Workers          | Parallel synthesis     | All modern browsers                    |
 | OPFS                 | Asset caching          | Chrome 86+, Firefox 111+, Safari 15.2+ |
-| SHA-256 (Web Crypto) | Integrity verification | All modern browsers                    |
+| SHA-256 (Web Crypto) | Integrity verification | All modern browsers (Secure Context required) |
 
 **Note:** The library enforces single-threaded workers (`numThreads = 1`), which works out-of-the-box in all modern browsers without special headers or `SharedArrayBuffer` requirements.
 

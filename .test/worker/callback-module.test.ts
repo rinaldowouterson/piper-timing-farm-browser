@@ -20,7 +20,7 @@ describe('Worker-Thread Callback Module', () => {
         
         // Initialize with callback module configuration
         await provider.init({
-            voiceId: 'en_US-bryce-medium',
+
             modelId: 'en_US-bryce-medium',
             cpuInstances: 2,
             callbackModule: {
@@ -53,7 +53,7 @@ describe('Worker-Thread Callback Module', () => {
         
         // Initialize WITHOUT callback module
         await provider.init({
-            voiceId: 'en_US-bryce-medium',
+
             modelId: 'en_US-bryce-medium',
             cpuInstances: 2
             // No callbackModule config
@@ -74,7 +74,7 @@ describe('Worker-Thread Callback Module', () => {
         const provider = createPiperProvider();
         
         await provider.init({
-            voiceId: 'en_US-bryce-medium',
+
             modelId: 'en_US-bryce-medium',
             cpuInstances: 2,
             callbackModule: {

@@ -14,7 +14,7 @@ import type { PiperWorkerConfig, WorkerState, RequestStatusPayload } from '../..
 
 describe('Worker Pool Edge Cases', () => {
     const baseConfig: PiperWorkerConfig = {
-        voiceId: 'en_US-bryce-medium',
+
         modelId: 'en_US-bryce-medium',
         instanceId: 0,
         onnxRuntimePaths: {
@@ -26,7 +26,7 @@ describe('Worker Pool Edge Cases', () => {
             piperData: '/assets/piper_phonemize.data',
             piperJs: '/assets/piper_phonemize.js',
             piperWasm: '/assets/piper_phonemize.wasm'
-        }
+        , piperJsSha256: '' }
     };
 
     it('should terminate idle workers immediately during reinit', async () => {
