@@ -14,7 +14,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 // Import after mocking fetch
 import { resolveOpfsAsset } from '../../src/utils/resolve-opfs-asset';
-import { verifySha256 } from '../../src/utils/resolve-sha256';
+import { verifySha256 } from '../../src/utils/resolve-sha256-browser';
 
 describe('OPFS Asset Integrity (.meta marker)', () => {
   beforeEach(() => {

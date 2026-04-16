@@ -1,4 +1,4 @@
-import { verifySha256 } from "./resolve-sha256";
+import { verifySha256 } from "./resolve-sha256-browser";
 import { downloadFile } from "@huggingface/hub";
 
 function extractHFRepoPath(url: string): { repo: string; path: string; revision: string } | null {
@@ -123,6 +123,7 @@ export async function resolveOpfsAsset(
         // Check .meta marker — if it matches, the file was previously verified
         const verifiedHash = await readMetaMarker(voicesDir, filename);
         if (verifiedHash === expectedSha256.toLowerCase()) {
+          console.log(`[OPFS] Resident asset verified: ${filename}`);
           return await file.arrayBuffer();
         }
         // .meta missing or mismatch — file may be partial/corrupt.
@@ -214,9 +215,8 @@ export async function resolveOpfsAsset(
     const finalBuffer = await new Blob(chunks as BlobPart[]).arrayBuffer();
 
     // 4. Verify Integrity in RAM BEFORE writing to disk
-    if (expectedSha256) {
-      await verifySha256(finalBuffer, expectedSha256, url);
-    }
+    await verifySha256(finalBuffer, expectedSha256!, url);
+    console.log(`[OPFS] Downloaded asset verified: ${filename}`);
 
     // 5. Atomic Persistence — Write to OPFS only after verification passes
     const fileHandle = await voicesDir.getFileHandle(filename, { create: true });
@@ -230,9 +230,7 @@ export async function resolveOpfsAsset(
     }
     
     // Mark as verified
-    if (expectedSha256) {
-      await writeMetaMarker(voicesDir, filename, expectedSha256.toLowerCase());
-    }
+    await writeMetaMarker(voicesDir, filename, expectedSha256!.toLowerCase());
 
     return finalBuffer;
 

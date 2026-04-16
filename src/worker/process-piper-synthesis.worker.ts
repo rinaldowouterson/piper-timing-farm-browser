@@ -12,6 +12,7 @@ import type {
   PhonemizerOutput 
 } from "../types/piper";
 import { collectTransferables } from "./index";
+import { verifySha256 } from "../utils/resolve-sha256-browser";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -118,8 +119,19 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     const modelBuffer = await modelFile.arrayBuffer();
 
     // 2. Configure ORT
-    // We use dynamic import for the MJS bundle to ensure the environment is correctly set up
-    // in the worker thread.
+    // We fetch and verify the MJS bundle metadata BEFORE dynamic import
+    // to ensure bitwise integrity in the execution thread.
+    const ortRes = await fetch(onnxRuntimePaths.mjs);
+    if (!ortRes.ok) throw new Error(`Failed to fetch ORT glue: ${ortRes.statusText}`);
+    const ortCode = await ortRes.text();
+    
+    // Strict Verification (Universal Orchestrator)
+    log(`[Integrity] Verifying ORT glue: ${onnxRuntimePaths.mjs}`);
+    await verifySha256(ortCode, onnxRuntimePaths.mjsSha256, onnxRuntimePaths.mjs);
+    log(`[Integrity] Verified: ${onnxRuntimePaths.mjs}`);
+
+    // After verification, we trigger the dynamic import.
+    // The browser cache will serve the previously fetched content.
     const ortModule = await import(/* @vite-ignore */ onnxRuntimePaths.mjs);
     ortInstance = ortModule.default || ortModule;
     
@@ -155,17 +167,18 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
 async function handleLoadCallback(modulePath: string, functionName: string, expectedHash?: string) {
   log(`Loading callback: ${functionName} from ${modulePath}`);
   try {
-    // 1. Fetch content for integrity check if hash provided
-    // This also serves as a path validation pre-flight
-    if (expectedHash) {
-      const response = await fetch(modulePath);
-      if (!response.ok) throw new Error(`Failed to fetch callback module for integrity check: ${response.statusText}`);
-      const content = await response.text();
-      const isIntegrityValid = await verifyIntegrity(content, expectedHash);
-      if (!isIntegrityValid) {
-        throw new Error(`Integrity mismatch for callback module: ${modulePath}`);
-      }
+    // 1. Fetch content for integrity check (Mandatory)
+    const response = await fetch(modulePath);
+    if (!response.ok) throw new Error(`Failed to fetch callback module for integrity check: ${response.statusText}`);
+    const content = await response.text();
+    
+    // Strict Verification (Universal Orchestrator)
+    if (!expectedHash) {
+      throw new Error(`Integrity hash is mandatory for callback module: ${modulePath}`);
     }
+    log(`[Integrity] Verifying callback: ${modulePath}`);
+    await verifySha256(content, expectedHash, modulePath);
+    log(`[Integrity] Verified: ${modulePath}`);
 
     // 2. Perform Dynamic Import
     const module = await import(/* @vite-ignore */ modulePath);
@@ -275,11 +288,10 @@ async function loadPhonemizerModule(piperPaths: PiperWorkerConfig["piperPaths"],
   if (!response.ok) throw new Error(`Failed to fetch phonemizer glue: ${response.statusText}`);
   const glueCode = await response.text();
 
-  // Verify Integrity
-  const isIntegrityValid = await verifyIntegrity(glueCode, expectedHash);
-  if (!isIntegrityValid) {
-    throw new Error(`Integrity mismatch for phonemizer glue: ${glueUrl}`);
-  }
+  // Verify Integrity (Strict Mandate)
+  log(`[Integrity] Verifying phonemizer glue: ${glueUrl}`);
+  await verifySha256(glueCode, expectedHash!, glueUrl);
+  log(`[Integrity] Verified: ${glueUrl}`);
   
   // Create module using the legacy global-variable approach commonly used by Emscripten
   const createModule = new Function(glueCode + "; return createPiperPhonemize;")();
@@ -394,28 +406,5 @@ function sanitizeErrorPayload(err: unknown): string {
 }
 
 /**
- * SHA-256 integrity verification.
- * Returns true if untrusted content matches expected hash.
- * 
- * NOTE: crypto.subtle is only available in Secure Contexts (HTTPS/localhost).
- * If running in an insecure context, this will log a warning and return true.
+ * Placeholder for legacy verifyIntegrity — replaced by shared verifySha256 orchestrator.
  */
-async function verifyIntegrity(content: string, expectedHash: string | undefined): Promise<boolean> {
-  if (!expectedHash) return true;
-  
-  if (!self.crypto || !self.crypto.subtle) {
-    warn("Security verification suspended: crypto.subtle is missing (Insecure Context). Proceeding without integrity check.");
-    return true;
-  }
-
-  const msgUint8 = new TextEncoder().encode(content);
-  const hashBuffer = await self.crypto.subtle.digest('SHA-256', msgUint8);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  
-  const matches = hashHex === expectedHash.toLowerCase();
-  if (!matches) {
-    error(`Integrity MISMATCH! Expected: ${expectedHash}, Actual: ${hashHex}`);
-  }
-  return matches;
-}

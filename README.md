@@ -45,13 +45,13 @@ The `voiceId` field was redundant since `modelId` is the primary identifier.
 Replaces the need for per-request speaker selection in multi-speaker models.
 - **Action**: Pass `defaultSpeakerId: N` in `FarmConfig` to set the farm-wide default speaker.
 
-### 3. Mandatory SRI for Worker Glue
-`piperJsSha256` is now **mandatory** in `PiperPaths`. This ensures the phonemizer glue code is always verified before execution.
-- **Action**: If you provide custom `piperPaths`, ensure `piperJsSha256` is included. The default `PIPER_ASSET_URLS` already includes the verified hash for matching versions.
+### 3. Universal Integrity Mandate (Mandatory SHA-256)
+`piperJsSha256` and all asset hashes are now **mandatory**. The system no longer allows "fail-open" execution of unverified binaries.
+- **Action**: If you provide custom `piperPaths` or `callbackModules`, you **must** include an `integrity` hash. The engine will throw an error if a hash is missing or mismatches.
 
-### 4. `serviceWorkerUrl` for Subpaths
-Enables deployments in non-root environments (e.g., GitHub Pages).
-- **Action**: Use `serviceWorkerUrl: "/repo-name/control-asset-sw.js"` if your app is not at the domain root.
+### 4. Zero-Configuration Baseline
+Core engine assets (`piper-wasm`, `onnxruntime-web`) now use **Hardcoded Baselines**. 
+- **Benefit**: You no longer need to manually manage hashes for the standard library stack; the engine knows what to expect "out of the box".
 
 ---
 
@@ -703,26 +703,36 @@ postMessage(
 
 ---
 
-## Security & Privacy
+## Sovereign Security Architecture
 
-### Worker Security & Integrity (SRI)
+`piper-timing-farm` implements a strict **Universal Integrity Mandate**. Every bit of code or data that enters the execution environment is verified against a SHA-256 hash before use.
 
-`piper-timing-farm` implements strict **Subresource Integrity** verification for code loaded into the worker thread.
+### 1. The Secure-by-Default Pipeline
 
-1.  **Phonemizer Glue**: You must provide a `piperJsSha256` in your `PiperPaths` to verify the `piper_phonemize.js` glue script. This is now **mandatory** to prevent execution of tampered engine code.
-2.  **Worker Callbacks**: Custom callback modules can include an `integrity` hash. The worker will `fetch` the module and verify its SHA-256 hash before performing a dynamic `import()`.
+| Asset Layer | Integrity Source | Verification Gate |
+| :--- | :--- | :--- |
+| **Engine Binaries** | Hardcoded Baselines | Synthesized Worker Initialization |
+| **Voice Models** | HuggingFace OID / `.meta` markers | OPFS Admission & Worker Loading |
+| **Worker Callbacks** | Consumer-provided `integrity` | Dynamic `import()` Orchestrator |
 
-**How it works:**
-- The worker uses `self.crypto.subtle.digest('SHA-256', ...)` for verification.
-- **Fail-Safe**: If the hash mismatches, the worker will throw an `Integrity mismatch` error and refuse to execute the code.
-- **Insecure Contexts**: Since `crypto.subtle` is only available in Secure Contexts (HTTPS/localhost), integrity checks are suspended in insecure environments with a console warning.
+### 2. Zero-Configuration Baseline
+To reduce developer friction, the library includes **Hardcoded Baselines** for its core dependencies. You only need to provide hashes for your own custom models or callback modules.
 
-### Privacy & PII Safety
+### 3. Verification Orchestrator (Browser)
+The library uses a polymorphic SHA-256 orchestrator that adapts to your environment:
+- **Secure Contexts (HTTPS/Localhost)**: Uses the native `crypto.subtle` API for high-performance, hardware-accelerated verification.
+- **Insecure Contexts**: Uses a high-integrity **Closure-based JS Fallback** to ensure security is never compromised even in development environments where Web Crypto is unavailable.
 
-To prevent accidental leakage of sensitive user data (Personally Identifiable Information) into error logs or telemetry systems, the library implements automatic **PII Redaction**:
+### 4. Fail-Fast Enforcement
+The system is designed for **Atomic Detonation** on failure. If a hash mismatches:
+1. The asset is purged from OPFS immediately.
+2. The Worker terminates and rejects the initialization promise.
+3. A detailed security event is logged to the debug stream.
 
-- **Error Payloads**: If a synthesis request fails, the worker redacts the input `text` field from the error message that bubbles up to the main thread.
-- **Redaction Template**: `{ error: "...", originalRequest: { text: "[REDACTED]", ... } }`
+### 5. Privacy & PII Safety
+To prevent accidental leakage of sensitive user data:
+- **Error Redaction**: Input text is automatically redacted from error payloads before they are returned to the main thread.
+- **Sovereign Execution**: All processing happens on-device; no audio data or text ever leaves the local environment.
 
 ---
 

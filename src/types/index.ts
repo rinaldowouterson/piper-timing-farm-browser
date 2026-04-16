@@ -1,6 +1,11 @@
 // --- Synthesis Output ---
 
 /**
+ * Supported input types for SHA-256 calculation.
+ */
+export type HashInput = string | ArrayBuffer | Uint8Array;
+
+/**
  * Phoneme-level timing metadata from Piper.
  */
 export interface PiperMetadata {
@@ -80,8 +85,8 @@ export interface CallbackModuleConfig {
   path: string;
   /** Name of the exported function to invoke on synthesis completion. */
   functionName: string;
-  /** Optional SHA-256 integrity hash for the module. */
-  integrity?: string;
+  /** Mandatory SHA-256 integrity hash for the module. */
+  integrity: string;
 }
 
 /**
@@ -89,8 +94,16 @@ export interface CallbackModuleConfig {
  */
 export interface OnnxRuntimePaths {
   wasm: string;
+  /** Mandatory SHA-256 integrity hash for the ort-wasm.wasm binary. */
+  wasmSha256: string;
+  
   mjs: string;
+  /** Mandatory SHA-256 integrity hash for the ort-wasm.min.mjs glue script. */
+  mjsSha256: string;
+  
   mjsHelper: string;
+  /** Mandatory SHA-256 integrity hash for the helper script. */
+  mjsHelperSha256: string;
 }
 
 /**
@@ -98,10 +111,16 @@ export interface OnnxRuntimePaths {
  */
 export interface PiperPaths {
   piperWasm: string;
+  /** Mandatory SHA-256 integrity hash for the piper_phonemize.wasm binary. */
+  piperWasmSha256: string;
+
   piperJs: string;
-  piperData: string;
-  /** Mandatory SHA-256 integrity hash for the piperJs glue script. */
+  /** Mandatory SHA-256 integrity hash for the piper_phonemize.js glue script. */
   piperJsSha256: string;
+
+  piperData: string;
+  /** Mandatory SHA-256 integrity hash for the piper_phonemize.data file. */
+  piperDataSha256: string;
 }
 
 /**
