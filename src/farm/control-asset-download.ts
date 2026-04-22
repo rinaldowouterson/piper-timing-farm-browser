@@ -1,12 +1,11 @@
 import type { DownloadState, DownloadController } from "../types";
-import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
 
 /**
  * Internal entry for tracking a download in the registry.
  * Each entry represents a single model's download lifecycle.
  */
 interface DownloadEntry {
-  state: DownloadState;
+  file: DownloadState;
   controller: AbortController;
   promise: Promise<void>;
   resolve: () => void;
@@ -14,11 +13,18 @@ interface DownloadEntry {
   reject: (e: unknown) => void;
   urls: { onnx: string; config: string };
   expectedSha256?: { onnx?: string; config?: string };
-  options?: { onProgress?: (state: DownloadState) => void };
+  options?: { onProgress?: (file: DownloadState) => void };
 }
 
 /**
  * Stateful Download Controller for model assets.
+ * 
+ * Sovereign Gateway Architecture:
+ * - All downloads route through `/piper-gate/voices/*` Service Worker gateway
+ * - Service Worker handles: fetch → verify SHA-256 → write to OPFS → return
+ * - Progress reporting via BroadcastChannel from Service Worker
+ * - Browser propagates AbortSignal to Service Worker automatically
+ * 
  * Uses a Registry (Map) for state tracking and a Queue (Array) for FIFO sequencing.
  */
 export function createAssetDownloadController(): DownloadController {
@@ -26,12 +32,55 @@ export function createAssetDownloadController(): DownloadController {
   const queue: string[] = [];
   let activeId: string | null = null;
 
+  // ---------------------------------------------------------------------------
+  // BroadcastChannel: Bridge from Service Worker to callbacks
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Subscribe to progress messages from Service Worker.
+   * The SW broadcasts progress during download; we dispatch to callbacks.
+   * 
+   * Timing: Subscription happens immediately when controller is created
+   * (inside createAssetDownloadController, not lazy).
+   */
+  const progressChannel = new BroadcastChannel('piper-download-progress');
+
+  progressChannel.onmessage = (event) => {
+    const { type, filename, downloaded, total } = event.data;
+    
+    if (type === 'progress') {
+      // Registry lookup: find the download entry for this model
+      const modelId = filename.replace(/\.(onnx|onnx\.json)$/, '');
+      const entry = registry.get(modelId);
+      
+      // Invoke callback if entry exists and has onProgress
+      if (entry?.options?.onProgress) {
+        entry.file.bytesDownloaded = downloaded;
+        entry.file.bytesTotal = total;
+        entry.file.progress = total > 0 ? downloaded / total : 0;
+        entry.options.onProgress({ ...entry.file });
+      }
+    } else if (type === 'complete') {
+      // Mark download as complete in registry
+      const modelId = filename.replace(/\.(onnx|onnx\.json)$/, '');
+      const entry = registry.get(modelId);
+      if (entry) {
+        entry.file.status = 'complete';
+        entry.file.progress = 1.0;
+      }
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // OPFS Cleanup (for cancel/clear operations)
+  // ---------------------------------------------------------------------------
+
   async function purgeOpfs(modelId: string): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
       const voicesDir = await root.getDirectoryHandle("voices");
-      // Clean up all possible markers and files for this model
-      for (const ext of ["onnx", "onnx.json", "onnx.meta", "onnx.json.meta"]) {
+      // Clean up all files for this model
+      for (const ext of ["onnx", "onnx.json"]) {
         try {
           await voicesDir.removeEntry(`${modelId}.${ext}`);
         } catch { /* ignore if not exists */ }
@@ -39,40 +88,59 @@ export function createAssetDownloadController(): DownloadController {
     } catch { /* ignore root handle failures */ }
   }
 
+  // ---------------------------------------------------------------------------
+  // Download Execution: fetch via /piper-gate/ gateway
+  // ---------------------------------------------------------------------------
+
   async function executeDownload(modelId: string, entry: DownloadEntry): Promise<void> {
-    entry.state.state = "downloading";
+    entry.file.status = "downloading";
 
     try {
-      const onProgress = (downloaded: number, total: number) => {
-        entry.state.bytesDownloaded = downloaded;
-        entry.state.bytesTotal = total;
-        entry.state.progress = total > 0 ? downloaded / total : 0;
-        entry.options?.onProgress?.({ ...entry.state });
-      };
+      // The Service Worker intercepts these fetch calls and handles:
+      // 1. Check OPFS cache → verify SHA-256 → return if valid
+      // 2. If missing/corrupted: fetch from source → verify → write to OPFS → return
+      // 
+      // We pass SHA-256 and custom URLs via headers for non-registered models.
+      const headers: HeadersInit = {};
+      if (entry.expectedSha256?.onnx) {
+        headers['x-piper-sha256-onnx'] = entry.expectedSha256.onnx;
+      }
+      if (entry.expectedSha256?.config) {
+        headers['x-piper-sha256-config'] = entry.expectedSha256.config;
+      }
+      // For custom URLs (not in registry), pass the source URL
+      if (!entry.urls.onnx.startsWith('https://huggingface.co/rinaldow/')) {
+        headers['x-piper-url-onnx'] = entry.urls.onnx;
+      }
+      if (!entry.urls.config.startsWith('https://huggingface.co/rinaldow/')) {
+        headers['x-piper-url-config'] = entry.urls.config;
+      }
 
       // Download config first
-      await resolveOpfsAsset(
-        entry.urls.config,
-        modelId,
-        "onnx.json",
-        entry.expectedSha256?.config,
-        { signal: entry.controller.signal, onProgress }
-      );
+      const configResponse = await fetch(`/piper-gate/voices/${modelId}.onnx.json`, {
+        signal: entry.controller.signal,
+        headers,
+      });
+
+      if (!configResponse.ok) {
+        throw new Error(`Config download failed: ${configResponse.status} ${configResponse.statusText}`);
+      }
 
       if (entry.controller.signal.aborted) return;
 
       // Download ONNX model second
-      await resolveOpfsAsset(
-        entry.urls.onnx,
-        modelId,
-        "onnx",
-        entry.expectedSha256?.onnx,
-        { signal: entry.controller.signal, onProgress }
-      );
+      const onnxResponse = await fetch(`/piper-gate/voices/${modelId}.onnx`, {
+        signal: entry.controller.signal,
+        headers,
+      });
+
+      if (!onnxResponse.ok) {
+        throw new Error(`Model download failed: ${onnxResponse.status} ${onnxResponse.statusText}`);
+      }
 
       if (!entry.controller.signal.aborted) {
-        entry.state.state = "complete";
-        entry.state.progress = 1.0;
+        entry.file.status = "complete";
+        entry.file.progress = 1.0;
         entry.resolve();
       }
     } catch (err) {
@@ -80,8 +148,8 @@ export function createAssetDownloadController(): DownloadController {
         return; // Silent exit on abort (cancel handles rejections)
       }
       
-      entry.state.state = "error";
-      entry.state.error = err instanceof Error ? err.message : String(err);
+      entry.file.status = "error";
+      entry.file.error = err instanceof Error ? err.message : String(err);
       
       // Clean up partial files on any error to ensure a clean slate for retries
       await purgeOpfs(modelId);
@@ -117,18 +185,18 @@ export function createAssetDownloadController(): DownloadController {
       
       // Return existing promise if already and not in a terminal failure state
       if (existing && (
-        existing.state.state === "complete" || 
-        existing.state.state === "pending" || 
-        existing.state.state === "downloading"
+        existing.file.status === "complete" || 
+        existing.file.status === "pending" || 
+        existing.file.status === "downloading"
       )) {
         return existing.promise;
       }
       
       // If error or doesn't exist, create a fresh entry
       // This allows retry of failed downloads by just calling request() again
-      const state: DownloadState = {
+      const file: DownloadState = {
         modelId,
-        state: "pending",
+        status: "pending",
         bytesDownloaded: 0,
         bytesTotal: 0,
         progress: 0,
@@ -144,7 +212,7 @@ export function createAssetDownloadController(): DownloadController {
       });
 
       const entry: DownloadEntry = {
-        state,
+        file,
         controller: new AbortController(),
         promise,
         resolve: resolveFunc,
@@ -173,7 +241,7 @@ export function createAssetDownloadController(): DownloadController {
       entry.controller.abort();
       
       // 2. Reject the promise so listeners aren't suspended indefinitely
-      const wasActive = entry.state.state === "pending" || entry.state.state === "downloading";
+      const wasActive = entry.file.status === "pending" || entry.file.status === "downloading";
       if (wasActive) {
         entry.reject(new Error("Cancelled"));
       }
@@ -203,7 +271,7 @@ export function createAssetDownloadController(): DownloadController {
       for (const [id, entry] of registry) {
         // Abort and reject if it was in-flight or waiting
         entry.controller.abort();
-        if (entry.state.state === "pending" || entry.state.state === "downloading") {
+        if (entry.file.status === "pending" || entry.file.status === "downloading") {
           entry.reject(new Error("CancelledAll"));
         }
         results.push(purgeOpfs(id));
@@ -217,7 +285,7 @@ export function createAssetDownloadController(): DownloadController {
     getState() {
       const snapshot = new Map<string, DownloadState>();
       for (const [id, entry] of registry) {
-        snapshot.set(id, { ...entry.state });
+        snapshot.set(id, { ...entry.file });
       }
       return snapshot;
     },

@@ -6,11 +6,15 @@ import { generateSidecarHash } from '../utils/resolve-sha256-node';
 const __dirname = (import.meta as any).dirname;
 
 /**
- * Universal Provisioning CLI for Piper Timing Farm.
+ * Sovereign Gateway Provisioning CLI for Piper Timing Farm.
  * 
  * Protocol: Action (Provision) / HC (Assets) / LC (Full).
  * Purpose: Allows developers to initialize their local environment with 
- * necessary WASM/Binary assets regardless of their bundler.
+ * necessary WASM/Binary assets served through the /piper-gate/ Service Worker gateway.
+ * 
+ * Directory Structure:
+ * - Infra assets (ORT WASM, Piper phonemize) → public/piper-gate/infra/
+ * - Service Worker → public/piper-gate/control-asset-sw.js (for correct scope)
  */
 async function provision() {
   const cwd = process.cwd();
@@ -27,7 +31,8 @@ async function provision() {
 
   // Intelligent Detection: SvelteKit uses 'static/', others use 'public/'
   const isSvelteKit = fs.existsSync(path.join(cwd, 'svelte.config.js'));
-  const defaultDir = isSvelteKit ? 'static/assets' : 'public/assets';
+  const publicDir = isSvelteKit ? 'static' : 'public';
+  const defaultDir = `${publicDir}/piper-gate/infra`;
   const targetDir = args[1] || defaultDir;
 
   if (command === 'hash') {
@@ -58,10 +63,13 @@ async function provision() {
   }
 
   if (command !== 'init') {
-    console.log('\nPiper Timing Farm CLI');
+    console.log('\nPiper Timing Farm CLI - Sovereign Gateway Edition');
     console.log('Usage:');
-    console.log('  npx piper-farm init [target-path]  - Provision assets');
+    console.log('  npx piper-farm init [target-path]  - Provision assets to /piper-gate/infra/');
     console.log('  npx piper-farm hash <file-path>    - Generate sidecar integrity hash\n');
+    console.log('Default paths:');
+    console.log(`  SvelteKit: static/piper-gate/infra/`);
+    console.log(`  Others:    public/piper-gate/infra/\n`);
     process.exit(0);
   }
 
@@ -84,16 +92,17 @@ async function provision() {
 
   copyFiles(sourceAssetsDir, absTargetDir, targetDir);
 
-  // PROVISION SERVICE WORKER: Copy to the root of the target directory (e.g., /public/)
-  // This ensures the SW has maximum scope for interception.
+  // PROVISION SERVICE WORKER: Copy to /piper-gate/ directory for correct scope
+  // The SW must be served from /piper-gate/ to intercept /piper-gate/* requests
   const swSource = path.join(__dirname, 'control-asset-sw.js');
-  const swTargetDir = path.dirname(absTargetDir);
+  const swTargetDir = path.dirname(absTargetDir); // e.g., public/piper-gate/
   const swTarget = path.join(swTargetDir, 'control-asset-sw.js');
 
   if (fs.existsSync(swSource)) {
     console.log(`\nProvisioning Service Worker to ${path.relative(cwd, swTargetDir)}...`);
     fs.copyFileSync(swSource, swTarget);
     console.log(`  [OK] control-asset-sw.js`);
+    console.log(`  [OK] SW scope: /piper-gate/`);
   } else {
     console.warn(`\n[Warning] Could not find Service Worker source at ${swSource}. Skipping SW provisioning.`);
   }
@@ -117,10 +126,11 @@ function copyFiles(sourceDir: string, absTargetDir: string, relativeDisplayPath:
     console.log(`  [OK] ${file}`);
   }
 
-  console.log(`\nSuccess! ${files.length} assets provisioned.`);
+  console.log(`\nSuccess! ${files.length} infra assets provisioned.`);
   console.log('Next steps:');
-  console.log(`1. Ensure your server serves ${relativeDisplayPath} and /control-asset-sw.js`);
-  console.log('2. Use the library normally: import { ... } from "piper-timing-farm"\n');
+  console.log(`1. Ensure your server serves /piper-gate/ directory`);
+  console.log('2. Service Worker is registered at /piper-gate/control-asset-sw.js');
+  console.log('3. Use the library normally: import { ... } from "piper-timing-farm"\n');
 }
 
 provision().catch(err => {

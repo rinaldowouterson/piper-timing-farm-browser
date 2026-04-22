@@ -7,7 +7,6 @@ import type {
   WorkerLogPayload
 } from "../types";
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
-import { resolveOpfsAsset } from "../utils/resolve-opfs-asset";
 import { createAssetDownloadController } from "../farm/control-asset-download";
 import { PIPER_MODELS } from "../expose-piper-models";
 import { resolveCacheClearing } from "../utils/resolve-cache-clearing";

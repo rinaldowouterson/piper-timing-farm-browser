@@ -91,36 +91,38 @@ export interface CallbackModuleConfig {
 
 /**
  * Asset paths for ONNX Runtime.
+ * SHA-256 hashes are optional — Service Worker handles verification.
  */
 export interface OnnxRuntimePaths {
   wasm: string;
-  /** Mandatory SHA-256 integrity hash for the ort-wasm.wasm binary. */
-  wasmSha256: string;
+  /** Optional SHA-256 integrity hash (SW handles verification by default) */
+  wasmSha256?: string;
   
   mjs: string;
-  /** Mandatory SHA-256 integrity hash for the ort-wasm.min.mjs glue script. */
-  mjsSha256: string;
+  /** Optional SHA-256 integrity hash (SW handles verification by default) */
+  mjsSha256?: string;
   
   mjsHelper: string;
-  /** Mandatory SHA-256 integrity hash for the helper script. */
-  mjsHelperSha256: string;
+  /** Optional SHA-256 integrity hash (SW handles verification by default) */
+  mjsHelperSha256?: string;
 }
 
 /**
  * Asset paths for Piper specific WASM/Data.
+ * SHA-256 hashes are optional — Service Worker handles verification.
  */
 export interface PiperPaths {
   piperWasm: string;
-  /** Mandatory SHA-256 integrity hash for the piper_phonemize.wasm binary. */
-  piperWasmSha256: string;
+  /** Optional SHA-256 integrity hash (SW handles verification by default) */
+  piperWasmSha256?: string;
 
   piperJs: string;
-  /** Mandatory SHA-256 integrity hash for the piper_phonemize.js glue script. */
-  piperJsSha256: string;
+  /** Optional SHA-256 integrity hash (SW handles verification by default) */
+  piperJsSha256?: string;
 
   piperData: string;
-  /** Mandatory SHA-256 integrity hash for the piper_phonemize.data file. */
-  piperDataSha256: string;
+  /** Optional SHA-256 integrity hash (SW handles verification by default) */
+  piperDataSha256?: string;
 }
 
 /**
@@ -236,7 +238,7 @@ export interface PiperModelConfig {
  */
 export interface DownloadState {
   modelId: string;
-  state: 'pending' | 'downloading' | 'complete' | 'error';
+  status: 'pending' | 'downloading' | 'complete' | 'error';
   bytesDownloaded: number;
   bytesTotal: number;
   /** 0.0 to 1.0 */

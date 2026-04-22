@@ -12,7 +12,6 @@ import type {
   PhonemizerOutput 
 } from "../types/piper";
 import { collectTransferables } from "./index";
-import { verifySha256 } from "../utils/resolve-sha256-browser";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -104,34 +103,29 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
   log(`=== INIT START [${modelId}] ===`, { callback: callbackModule?.path, defaultSpeakerId });
   
   try {
-    // 1. Load context from OPFS
-    const root = await navigator.storage.getDirectory();
-    const voicesDir = await root.getDirectoryHandle("voices");
+    // 1. Load model assets via Service Worker Gateway
+    // The SW handles: OPFS cache → SHA-256 verification → return
+    // Workers are "Pure Consumers" — no direct OPFS access needed.
 
     // Load Model Config
-    const configHandle = await voicesDir.getFileHandle(`${modelId}.onnx.json`);
-    const configFile = await configHandle.getFile();
-    modelConfig = JSON.parse(await configFile.text()) as ModelConfig;
+    const configRes = await fetch(`/piper-gate/voices/${modelId}.onnx.json`);
+    if (!configRes.ok) throw new Error(`Failed to fetch model config: ${configRes.statusText}`);
+    const configText = await configRes.text();
+    modelConfig = JSON.parse(configText) as ModelConfig;
 
     // Load ONNX Model
-    const modelHandle = await voicesDir.getFileHandle(`${modelId}.onnx`);
-    const modelFile = await modelHandle.getFile();
-    const modelBuffer = await modelFile.arrayBuffer();
+    const modelRes = await fetch(`/piper-gate/voices/${modelId}.onnx`);
+    if (!modelRes.ok) throw new Error(`Failed to fetch model: ${modelRes.statusText}`);
+    const modelBuffer = await modelRes.arrayBuffer();
 
     // 2. Configure ORT
-    // We fetch and verify the MJS bundle metadata BEFORE dynamic import
-    // to ensure bitwise integrity in the execution thread.
+    // Service Worker handles SHA-256 verification for all /piper-gate/* requests.
+    // We simply fetch and import — SW guarantees integrity.
     const ortRes = await fetch(onnxRuntimePaths.mjs);
     if (!ortRes.ok) throw new Error(`Failed to fetch ORT glue: ${ortRes.statusText}`);
     const ortCode = await ortRes.text();
-    
-    // Strict Verification (Universal Orchestrator)
-    log(`[Integrity] Verifying ORT glue: ${onnxRuntimePaths.mjs}`);
-    await verifySha256(ortCode, onnxRuntimePaths.mjsSha256, onnxRuntimePaths.mjs);
-    log(`[Integrity] Verified: ${onnxRuntimePaths.mjs}`);
 
-    // After verification, we trigger the dynamic import.
-    // The browser cache will serve the previously fetched content.
+    // Dynamic import — browser cache serves the verified content from SW
     const ortModule = await import(/* @vite-ignore */ onnxRuntimePaths.mjs);
     ortInstance = ortModule.default || ortModule;
     
@@ -148,7 +142,7 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     });
 
     // 3. Load Phonemizer
-    await loadPhonemizerModule(piperPaths, piperPaths.piperJsSha256);
+    await loadPhonemizerModule(piperPaths);
 
     // 4. Load Callback if configured
     if (callbackModule) {
@@ -167,15 +161,21 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
 async function handleLoadCallback(modulePath: string, functionName: string, expectedHash?: string) {
   log(`Loading callback: ${functionName} from ${modulePath}`);
   try {
-    // 1. Fetch content for integrity check (Mandatory)
+    // 1. Fetch content for integrity check (Mandatory for user-provided callbacks)
     const response = await fetch(modulePath);
-    if (!response.ok) throw new Error(`Failed to fetch callback module for integrity check: ${response.statusText}`);
+    if (!response.ok) throw new Error(`Failed to fetch callback module: ${response.statusText}`);
     const content = await response.text();
     
-    // Strict Verification (Universal Orchestrator)
+    // Strict Verification for user-provided callback modules
+    // This is NOT redundant with SW verification because:
+    // - User callbacks are NOT served through /piper-gate/
+    // - They are arbitrary user code that gets executed in the worker thread
     if (!expectedHash) {
       throw new Error(`Integrity hash is mandatory for callback module: ${modulePath}`);
     }
+    
+    // Import verifySha256 inline for callback verification only
+    const { verifySha256 } = await import("../utils/resolve-sha256-browser");
     log(`[Integrity] Verifying callback: ${modulePath}`);
     await verifySha256(content, expectedHash, modulePath);
     log(`[Integrity] Verified: ${modulePath}`);
@@ -281,17 +281,13 @@ export async function processPiperSynthesis(
 
 let lastPhonemizerOutput: PhonemizerOutput | null = null;
 
-async function loadPhonemizerModule(piperPaths: PiperWorkerConfig["piperPaths"], expectedHash?: string) {
-  // The phonemizer glue JS is served alongside the WASM
+async function loadPhonemizerModule(piperPaths: PiperWorkerConfig["piperPaths"]) {
+  // The phonemizer glue JS is served through /piper-gate/infra/
+  // Service Worker handles SHA-256 verification automatically.
   const glueUrl = piperPaths.piperJs;
   const response = await fetch(glueUrl);
   if (!response.ok) throw new Error(`Failed to fetch phonemizer glue: ${response.statusText}`);
   const glueCode = await response.text();
-
-  // Verify Integrity (Strict Mandate)
-  log(`[Integrity] Verifying phonemizer glue: ${glueUrl}`);
-  await verifySha256(glueCode, expectedHash!, glueUrl);
-  log(`[Integrity] Verified: ${glueUrl}`);
   
   // Create module using the legacy global-variable approach commonly used by Emscripten
   const createModule = new Function(glueCode + "; return createPiperPhonemize;")();

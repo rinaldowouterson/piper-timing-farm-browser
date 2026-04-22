@@ -68,17 +68,17 @@ describe('Download Controller FIFO (Option B)', () => {
 
         // Check initial state
         const state1 = controller.getState();
-        expect(state1.get('model-1')!.state).toBe('downloading');
-        expect(state1.get('model-2')!.state).toBe('pending');
-        expect(state1.get('model-3')!.state).toBe('pending');
+        expect(state1.get('model-1')!.status).toBe('downloading');
+        expect(state1.get('model-2')!.status).toBe('pending');
+        expect(state1.get('model-3')!.status).toBe('pending');
 
         await Promise.all([p1, p2, p3]);
 
         // Check completion
         const stateFinal = controller.getState();
-        expect(stateFinal.get('model-1')!.state).toBe('complete');
-        expect(stateFinal.get('model-2')!.state).toBe('complete');
-        expect(stateFinal.get('model-3')!.state).toBe('complete');
+        expect(stateFinal.get('model-1')!.status).toBe('complete');
+        expect(stateFinal.get('model-2')!.status).toBe('complete');
+        expect(stateFinal.get('model-3')!.status).toBe('complete');
 
         // Verify sequential execution: end of N <= start of N+1
         // (Note: there might be a few ms of overhead in JS event loop)
@@ -123,8 +123,8 @@ describe('Download Controller FIFO (Option B)', () => {
         await pSuccess;
 
         const state = controller.getState();
-        expect(state.get('model-fail')!.state).toBe('error');
-        expect(state.get('model-success')!.state).toBe('complete');
+        expect(state.get('model-fail')!.status).toBe('error');
+        expect(state.get('model-success')!.status).toBe('complete');
         
         errorSpy.mockRestore();
     });

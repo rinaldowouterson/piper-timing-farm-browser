@@ -5,12 +5,40 @@ import type {
   PendingRequest, 
   PiperWorkerMessageOut,
   RequestStatusPayload,
-  WorkerLogPayload
+  WorkerLogPayload,
+  OnnxRuntimePaths,
+  PiperPaths
 } from "../types";
 import { createWorkerPool } from "./control-worker-pool";
-import { ONNX_ASSET_URLS } from "../worker/resolve-assets-onnxruntime";
-import { PIPER_ASSET_URLS } from "../worker/resolve-assets-piper";
 import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
+
+// ---------------------------------------------------------------------------
+// Default Asset Paths (Service Worker Gateway)
+// ---------------------------------------------------------------------------
+
+/**
+ * Default ONNX Runtime asset paths via /piper-gate/infra/
+ * Service Worker handles SHA-256 verification automatically.
+ */
+const ONNX_ASSET_URLS: OnnxRuntimePaths = {
+  wasm: '/piper-gate/infra/',
+  mjs: '/piper-gate/infra/ort.wasm.min.mjs',
+  mjsHelper: '/piper-gate/infra/ort-wasm-simd-threaded.mjs',
+};
+
+/**
+ * Default Piper phonemizer asset paths via /piper-gate/infra/
+ * Service Worker handles SHA-256 verification automatically.
+ */
+const PIPER_ASSET_URLS: PiperPaths = {
+  piperData: '/piper-gate/infra/piper_phonemize.data',
+  piperJs:   '/piper-gate/infra/piper_phonemize.js',
+  piperWasm: '/piper-gate/infra/piper_phonemize.wasm',
+};
+
+// ---------------------------------------------------------------------------
+// Worker Farm Implementation
+// ---------------------------------------------------------------------------
 
 /**
  * Creates the high-performance Piper worker farm.
