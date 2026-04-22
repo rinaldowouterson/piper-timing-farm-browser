@@ -180,6 +180,23 @@ const MIME_REGISTRY: Record<string, string> = {
 
 const progressChannel = new BroadcastChannel('piper-download-progress');
 
+/**
+ * Broadcasts a detailed error message to the main thread.
+ * Ensures the developer sees EXACTLY why a provision or fetch failed.
+ */
+function broadcastError(filename: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+  
+  progressChannel.postMessage({
+    type: 'error',
+    filename,
+    message,
+    stack,
+    code: (error as any)?.name || 'UNKNOWN_ERROR'
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -213,6 +230,7 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
 // ---------------------------------------------------------------------------
 
 async function resolveAsset(assetPath: string, request: Request): Promise<Response> {
+  try {
   const mimeType = resolveMimeType(assetPath);
 
   // Parse path: either "infra/filename" or "voices/modelId.ext"
@@ -224,11 +242,20 @@ async function resolveAsset(assetPath: string, request: Request): Promise<Respon
   const [directory, filename] = pathParts;
 
   if (directory === 'infra') {
-    return resolveInfraAsset(filename, mimeType);
+    return await resolveInfraAsset(filename, mimeType);
   } else if (directory === 'voices') {
-    return resolveVoiceAsset(filename, mimeType, request);
+    return await resolveVoiceAsset(filename, mimeType, request);
   } else {
     return new Response(`[piper-gate] Unknown directory: ${directory}`, { status: 400 });
+  }
+  } catch (err) {
+    // Generalized Error Gateway: Report EVERYTHING that fails in the SW
+    broadcastError(assetPath, err);
+    
+    return new Response(err instanceof Error ? err.message : String(err), {
+      status: 500,
+      statusText: 'Piper Gateway Resolver Error'
+    });
   }
 }
 

@@ -269,3 +269,30 @@ export interface DownloadController {
   /** Clean up all listeners and channels (BroadcastChannel) */
   destroy(): void;
 }
+
+// --- Broadcast Channel Types ---
+
+export interface BroadcastProgressPayload {
+  type: 'progress';
+  filename: string;
+  downloaded: number;
+  total: number;
+}
+
+export interface BroadcastCompletePayload {
+  type: 'complete';
+  filename: string;
+}
+
+export interface BroadcastErrorPayload {
+  type: 'error';
+  filename: string;
+  message: string;
+  code?: string;
+  stack?: string;
+}
+
+export type BroadcastPayload = 
+  | BroadcastProgressPayload 
+  | BroadcastCompletePayload 
+  | BroadcastErrorPayload;

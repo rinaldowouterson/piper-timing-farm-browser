@@ -68,6 +68,24 @@ export function createAssetDownloadController(): DownloadController {
         entry.file.status = 'complete';
         entry.file.progress = 1.0;
       }
+    } else if (type === 'error') {
+      // Handle Generalized Error Broadcasts from Service Worker
+      const { filename, message, code, stack } = event.data;
+      const modelId = filename.replace(/\.(onnx|onnx\.json)$/, '');
+      const entry = registry.get(modelId);
+      
+      if (entry) {
+        entry.file.status = 'error';
+        entry.file.error = `${code}: ${message}`;
+        
+        // Wrap the error with full diagnostic info
+        const swError = new Error(message);
+        (swError as any).code = code;
+        (swError as any).stack = stack;
+        (swError as any).filename = filename;
+        
+        entry.reject(swError);
+      }
     }
   };
 
