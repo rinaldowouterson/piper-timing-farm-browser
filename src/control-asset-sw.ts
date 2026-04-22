@@ -14,6 +14,8 @@
  * - `/piper-gate/voices/*` — Voice ONNX models (hardcoded or HF API lookup)
  */
 
+import { downloadFile } from "@huggingface/hub";
+
 // Cast to ServiceWorkerGlobalScope to resolve the dual DOM+WebWorker lib conflict
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
@@ -317,6 +319,7 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
   const isConfig = filename.endsWith('.onnx.json');
   const modelId = isConfig ? filename.slice(0, -10) : filename.slice(0, -5);
   const extension = isConfig ? 'config' : 'onnx';
+  const isCacheDownload = request.headers.get('x-piper-cache-download') === 'true';
 
   // 1. Get expected SHA-256
   let expectedSha256: string | null = null;
@@ -393,13 +396,43 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
   }
 
   // 4. Download with progress broadcasting
+  // Use @huggingface/hub for HF URLs (Xet Protocol optimization), standard fetch otherwise
   try {
+    const hfInfo = extractHFRepoPath(sourceUrl);
+    let data: ArrayBuffer;
+    let contentLength = 0;
+
+    if (hfInfo) {
+      // Hugging Face Hub (Xet Protocol) — optimized CDN handling
+      console.log(`[piper-gate] Using HF Hub download for: ${filename}`);
+      const blob = await downloadFile({
+        repo: hfInfo.repo,
+        revision: hfInfo.revision,
+        path: hfInfo.path,
+      });
+      if (!blob) {
+        return new Response(`[piper-gate] HF Hub failed to resolve: ${filename}`, { status: 502 });
+      }
+      
+      contentLength = blob.size;
+      
+      // Broadcast progress (single update for HF downloads — library handles internally)
+      progressChannel.postMessage({
+        type: 'progress',
+        filename,
+        downloaded: contentLength,
+        total: contentLength,
+      });
+      
+      data = await blob.arrayBuffer();
+    } else {
+      // Standard Fetch for non-HF URLs
     const response = await fetch(sourceUrl, { signal: request.signal });
     if (!response.ok) {
       return new Response(`[piper-gate] Source returned ${response.status} for: ${filename}`, { status: 502 });
     }
 
-    const contentLength = Number(response.headers.get('Content-Length')) || 0;
+    contentLength = Number(response.headers.get('Content-Length')) || 0;
 
     // RAM-First: buffer fully, verify, then persist
     const reader = response.body?.getReader();
@@ -436,7 +469,8 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
     }
 
     // Concatenate chunks
-    const data = await new Blob(chunks as BlobPart[]).arrayBuffer();
+    data = await new Blob(chunks as BlobPart[]).arrayBuffer();
+  }
 
     // Verify integrity
     const isValid = await verifySha256(data, expectedSha256);
@@ -455,6 +489,18 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
     });
 
     console.log(`[piper-gate] Voice asset downloaded and verified: ${filename}`);
+
+    // MEMORY FIX: If requester only wanted to trigger cache, return 204 No Content
+    if (isCacheDownload) {
+      return new Response(null, { 
+        status: 204,
+        headers: {
+          'x-piper-sw': 'verified',
+          'x-piper-sha256': expectedSha256
+        }
+      });
+    }
+
     return new Response(data, {
       status: 200,
       headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },

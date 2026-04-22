@@ -266,4 +266,6 @@ export interface DownloadController {
   getState(): Map<string, DownloadState>;
   /** Purge cached OPFS files for a model and re-download from scratch. */
   clearAndRedownloadModel(modelId: string): Promise<void>;
+  /** Clean up all listeners and channels (BroadcastChannel) */
+  destroy(): void;
 }

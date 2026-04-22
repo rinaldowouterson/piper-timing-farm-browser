@@ -41,48 +41,25 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   const logListeners = new Set<(log: WorkerLogPayload) => void>();
   let farmUnsubscribe: (() => void) | null = null;
   let farmLogUnsubscribe: (() => void) | null = null;
+  
+  // Early SW Registration: Mandatory in the browser. 
+  // If this fails, init() will throw a fatal error to protect integrity.
+  let swRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> = Promise.resolve(undefined);
+  if (typeof window !== 'undefined') {
+    swRegistrationPromise = setupAssetSW();
+  }
 
   return {
     async init(config: FarmConfig) {
       const transitionId = ++lastTransitionId;
       const { modelId, modelUrls, callbackModule } = config;
 
-      // Ensure the asset-intercepting Service Worker is registered before
-      // any /assets/* requests are issued. Non-fatal if SW is unsupported.
+      // 0. Ensure Service Worker is active and controlling the page
       if (typeof window !== 'undefined') {
-        try {
-          await setupAssetSW(config.serviceWorkerUrl);
-        } catch {
-          console.warn('[PiperProvider] Asset SW registration failed — falling back to direct asset URLs');
-        }
+        await swRegistrationPromise;
       }
 
-      // 1. Initial configuration check
-      const isSameModel = activeModelId === modelId;
-      const isSameCallback = activeCallbackPath === (callbackModule?.path || null);
-      const isSameSpeaker = activeDefaultSpeakerId === config.defaultSpeakerId;
-
-      // If already initialized and configuration matches perfectly, skip
-      if (farm && isSameModel && isSameCallback && isSameSpeaker) return;
-
-      // If same model but configuration changed (e.g. callback or speaker), trigger a re-init
-      if (farm && isSameModel && (!isSameCallback || !isSameSpeaker)) {
-        try {
-          await farm.reinit({ 
-            modelId,
-            callbackModule: callbackModule,
-            defaultSpeakerId: config.defaultSpeakerId
-          });
-          activeCallbackPath = callbackModule?.path || null;
-          activeDefaultSpeakerId = config.defaultSpeakerId;
-          return;
-        } catch (err) {
-          if (err instanceof DOMException && err.name === 'AbortError') return;
-          throw err;
-        }
-      }
-
-      // Ensure asset integrity and cache in OPFS
+      // 1. Ensure asset integrity and cache in OPFS
       const modelEntry = PIPER_MODELS.find(m => m.id === modelId);
       const onnxUrl = modelUrls?.onnx || modelEntry?.modelUrl;
       const jsonUrl = modelUrls?.config || modelEntry?.configUrl;
@@ -91,7 +68,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 
       loadingModelId = modelId;
       
-      // 1. Download & Verify via the download controller
+      // 2. Download & Verify via the sovereign gateway (SW)
       try {
         await downloader.request(
           modelId, 
@@ -103,51 +80,30 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
           { onProgress: config.onProgress }
         );
       } catch (err) {
-        // Download failed or was cancelled — clean up loading state
-        if (transitionId === lastTransitionId) {
-          loadingModelId = null;
-        }
+        if (transitionId === lastTransitionId) loadingModelId = null;
         throw err;
       }
 
-      // STALE CHECK: A newer init() was called during download — abandon this one
+      // STALE CHECK: A newer init() was called during download — abandon
       if (transitionId !== lastTransitionId) return;
 
-      // LOCK the farm if we are switching models to ensure subsequent requests 
-      // are queued for the NEW model that is currently being provisioned.
-      if (farm && activeModelId !== modelId) {
-        farm.prepareTransition(modelId);
-      }
-
-      // 2. Initial Setup or Handoff
+      // 3. Farm Setup or Hotswap
+      // The WorkerPool internally handles Surgical Updates vs Shadow Pool transitions.
       if (!farm) {
         farm = createPiperWorkerFarm();
-        
-        farmUnsubscribe = farm.onQueueStatus((status) => {
-          queueListeners.forEach(l => l(status));
-        });
-
-        farmLogUnsubscribe = farm.onLog((log) => {
-          logListeners.forEach(l => l(log));
-        });
-
-        await farm.init({
-          ...config,
-        });
+        farmUnsubscribe = farm.onQueueStatus((status) => queueListeners.forEach(l => l(status)));
+        farmLogUnsubscribe = farm.onLog((log) => logListeners.forEach(l => l(log)));
+        await farm.init(config);
       } else {
+        // If switching models, prepare the transition (queues current model)
+        if (activeModelId !== modelId) {
+          farm.prepareTransition(modelId);
+        }
+
         try {
-          // SHADOW POOL OPTIMIZATION: Non-blocking re-init while queue is running
-          await farm.reinit({ 
-            modelId, 
-            modelUrls: config.modelUrls,
-            callbackModule: config.callbackModule,
-            defaultSpeakerId: config.defaultSpeakerId
-          });
+          await farm.reinit(config);
         } catch (err) {
-          // Transition was superseded by a newer reinit() — silently return
-          if (err instanceof DOMException && err.name === 'AbortError') {
-            return;
-          }
+          if (err instanceof DOMException && err.name === 'AbortError') return;
           throw err;
         }
       }
@@ -182,6 +138,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 
     terminate() {
       downloader.cancelAll();
+      downloader.destroy();
       farmUnsubscribe?.();
       farmLogUnsubscribe?.();
       farm?.terminate();

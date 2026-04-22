@@ -45,9 +45,9 @@ describe('CLI > Unified Framework Orchestration', () => {
         // Runs the compiled artifact — exactly what consumers execute
         execSync(`node ${cliPath} init`, { cwd: project });
 
-        expect(fs.existsSync(path.join(project, 'public/assets/ort.wasm.min.mjs'))).toBe(true);
-        expect(fs.existsSync(path.join(project, 'public/assets/piper_phonemize.wasm'))).toBe(true);
-        expect(fs.existsSync(path.join(project, 'public/control-asset-sw.js'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'public/piper-gate/infra/ort.wasm.min.mjs'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'public/piper-gate/infra/piper_phonemize.wasm'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'public/piper-gate/control-asset-sw.js'))).toBe(true);
     });
 
     it('should provision assets to SvelteKit Skeleton (static/assets)', () => {
@@ -58,9 +58,9 @@ describe('CLI > Unified Framework Orchestration', () => {
 
         execSync(`node ${cliPath} init`, { cwd: project });
 
-        expect(fs.existsSync(path.join(project, 'static/assets/ort.wasm.min.mjs'))).toBe(true);
-        expect(fs.existsSync(path.join(project, 'static/assets/piper_phonemize.wasm'))).toBe(true);
-        expect(fs.existsSync(path.join(project, 'static/control-asset-sw.js'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'static/piper-gate/infra/ort.wasm.min.mjs'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'static/piper-gate/infra/piper_phonemize.wasm'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'static/piper-gate/control-asset-sw.js'))).toBe(true);
     });
 
     it('should reject execution outside project root (no package.json)', () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createPiperProvider } from '../../src/providers/create-piper-provider';
 
 /**
@@ -12,6 +12,17 @@ import { createPiperProvider } from '../../src/providers/create-piper-provider';
  * Implementation: See process-piper-synthesis.worker.ts lines 45-47, 180-208
  */
 describe('Worker-Thread Callback Module', () => {
+    beforeEach(() => {
+        // Mock Service Worker for JSDOM environment
+        (global as any).navigator.serviceWorker = {
+            register: vi.fn().mockResolvedValue({ scope: '/piper-gate/' }),
+            ready: Promise.resolve(),
+            controller: {},
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+    });
+
     it('should return callbackResult when callbackModule is configured', async () => {
         // Suppress expected warnings from mock environment
         const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -25,7 +36,8 @@ describe('Worker-Thread Callback Module', () => {
             cpuInstances: 2,
             callbackModule: {
                 path: '/test/fixtures/callback-module.ts',
-                functionName: 'onSynthesisComplete'
+                functionName: 'onSynthesisComplete',
+                integrity: 'sha256-mock-hash'
             }
         });
 
@@ -79,7 +91,8 @@ describe('Worker-Thread Callback Module', () => {
             cpuInstances: 2,
             callbackModule: {
                 path: '/test/fixtures/callback-module.ts',
-                functionName: 'onSynthesisComplete'
+                functionName: 'onSynthesisComplete',
+                integrity: 'sha256-mock-hash'
             }
         });
 

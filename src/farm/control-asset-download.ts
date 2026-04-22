@@ -101,7 +101,10 @@ export function createAssetDownloadController(): DownloadController {
       // 2. If missing/corrupted: fetch from source → verify → write to OPFS → return
       // 
       // We pass SHA-256 and custom URLs via headers for non-registered models.
-      const headers: HeadersInit = {};
+      const headers: HeadersInit = {
+        'x-piper-cache-download': 'true'
+      };
+
       if (entry.expectedSha256?.onnx) {
         headers['x-piper-sha256-onnx'] = entry.expectedSha256.onnx;
       }
@@ -122,7 +125,7 @@ export function createAssetDownloadController(): DownloadController {
         headers,
       });
 
-      if (!configResponse.ok) {
+      if (!configResponse.ok && configResponse.status !== 204) {
         throw new Error(`Config download failed: ${configResponse.status} ${configResponse.statusText}`);
       }
 
@@ -134,7 +137,7 @@ export function createAssetDownloadController(): DownloadController {
         headers,
       });
 
-      if (!onnxResponse.ok) {
+      if (!onnxResponse.ok && onnxResponse.status !== 204) {
         throw new Error(`Model download failed: ${onnxResponse.status} ${onnxResponse.statusText}`);
       }
 
@@ -301,6 +304,10 @@ export function createAssetDownloadController(): DownloadController {
 
       // 2. Re-request from scratch (this will add to registry and queue)
       return this.request(modelId, urls, expectedSha256, options);
+    },
+    
+    destroy() {
+      progressChannel.close();
     },
   };
 }

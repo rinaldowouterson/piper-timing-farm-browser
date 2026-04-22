@@ -17,6 +17,15 @@ describe('Provider API', () => {
     let provider: ReturnType<typeof createPiperProvider>;
     
     beforeEach(() => {
+        // Mock Service Worker for JSDOM environment
+        (global as any).navigator.serviceWorker = {
+            register: vi.fn().mockResolvedValue({ scope: '/piper-gate/' }),
+            ready: Promise.resolve(),
+            controller: {}, // Simulate being controlled
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+
         provider = createPiperProvider();
         vi.clearAllMocks();
     });

@@ -12,6 +12,15 @@ import { createPiperProvider } from '../../src/providers/create-piper-provider';
  */
 describe('Resilient Model Transition Test', () => {
     it('should maintain FIFO queue during rapid model switching', async () => {
+        // Mock Service Worker for JSDOM environment
+        (global as any).navigator.serviceWorker = {
+            register: vi.fn().mockResolvedValue({ scope: '/piper-gate/' }),
+            ready: Promise.resolve(),
+            controller: {},
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        };
+
         // Suppress expected SHA-256 and OPFS warnings from mock environment
         const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
