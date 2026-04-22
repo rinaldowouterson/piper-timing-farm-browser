@@ -42,7 +42,7 @@ describe('Worker Pool Edge Cases', () => {
         expect(pool.getBusyCount()).toBe(0);
         
         // Reinit with new model - idle workers should be terminated immediately
-        const newConfig = { modelId: 'en_US-amy-medium', voiceId: 'en_US-amy-medium' };
+        const newConfig = { modelId: 'en_US-amy-medium' };
         await pool.reinit(newConfig);
         
         // Pool should have new workers
@@ -69,7 +69,7 @@ describe('Worker Pool Edge Cases', () => {
         expect(pool.getBusyCount()).toBe(1);
         
         // Reinit - busy worker should not be terminated immediately
-        const newConfig = { modelId: 'en_US-amy-medium', voiceId: 'en_US-amy-medium' };
+        const newConfig = { modelId: 'en_US-amy-medium' };
         
         // Start reinit (it will wait for busy worker)
         const reinitPromise = pool.reinit(newConfig);
@@ -189,7 +189,7 @@ describe('Worker Pool Edge Cases', () => {
         ];
 
         const results = await Promise.allSettled(
-            models.map(modelId => pool.reinit({ modelId, voiceId: modelId }))
+            models.map(modelId => pool.reinit({ modelId }))
         );
 
         // First 4 should be rejected with AbortError (superseded)
