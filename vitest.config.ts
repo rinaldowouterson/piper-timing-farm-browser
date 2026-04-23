@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      'piper-callback.js': path.resolve(__dirname, './.test/fixtures/piper-callback.ts')
     },
   },
 });

@@ -71,7 +71,7 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
         await setupPiperWorker(msg.config);
         break;
       case "load-callback":
-        await handleLoadCallback(msg.modulePath, msg.functionName, msg.integrity);
+        await toggleCallback(msg.useCallback);
         break;
       case "synthesize":
         await processPiperSynthesis(msg.text, msg.requestId, {
@@ -95,12 +95,12 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
 
 // --- Initialization ---
 export async function setupPiperWorker(config: PiperWorkerConfig) {
-  const { modelId, onnxRuntimePaths, piperPaths, instanceId: id, callbackModule, defaultSpeakerId: defaultSid } = config;
+  const { modelId, onnxRuntimePaths, piperPaths, instanceId: id, useCallback, defaultSpeakerId: defaultSid } = config;
   instanceId = id || 0;
   currentModelId = modelId;
   defaultSpeakerId = defaultSid || 0;
 
-  log(`=== INIT START [${modelId}] ===`, { callback: callbackModule?.path, defaultSpeakerId });
+  log(`=== INIT START [${modelId}] ===`, { useCallback, defaultSpeakerId });
   
   try {
     // 1. Load model assets via Service Worker Gateway
@@ -145,8 +145,8 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     await loadPhonemizerModule(piperPaths);
 
     // 4. Load Callback if configured
-    if (callbackModule) {
-      await handleLoadCallback(callbackModule.path, callbackModule.functionName, callbackModule.integrity);
+    if (useCallback) {
+      await toggleCallback(true);
     }
 
     log("=== INIT COMPLETE ===");
@@ -158,41 +158,40 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
   }
 }
 
-async function handleLoadCallback(modulePath: string, functionName: string, expectedHash?: string) {
-  log(`Loading callback: ${functionName} from ${modulePath}`);
-  try {
-    // 1. Fetch content for integrity check (Mandatory for user-provided callbacks)
-    const response = await fetch(modulePath);
-    if (!response.ok) throw new Error(`Failed to fetch callback module: ${response.statusText}`);
-    const content = await response.text();
-    
-    // Strict Verification for user-provided callback modules
-    // This is NOT redundant with SW verification because:
-    // - User callbacks are NOT served through /piper-gate/
-    // - They are arbitrary user code that gets executed in the worker thread
-    if (!expectedHash) {
-      throw new Error(`Integrity hash is mandatory for callback module: ${modulePath}`);
+export async function toggleCallback(enabled: boolean) {
+  if (!enabled) {
+    if (userCallback) {
+      log("Callback disabled via surgical toggle");
+      userCallback = null;
     }
-    
-    // Import verifySha256 inline for callback verification only
-    const { verifySha256 } = await import("../utils/resolve-sha256-browser");
-    log(`[Integrity] Verifying callback: ${modulePath}`);
-    await verifySha256(content, expectedHash, modulePath);
-    log(`[Integrity] Verified: ${modulePath}`);
+    return;
+  }
 
-    // 2. Perform Dynamic Import
-    const module = await import(/* @vite-ignore */ modulePath);
-    userCallback = module[functionName];
-    if (typeof userCallback !== 'function') {
-      throw new Error(`Export '${functionName}' is not a function in ${modulePath}`);
+  const modulePath = new URL('piper-callback.js', self.location.href).href;
+  log(`Loading sovereign callback: ${modulePath}`);
+  
+  try {
+    // 1. Fetch to capture granular SW gateway errors (403/404)
+    const response = await fetch(modulePath);
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => response.statusText);
+      throw new Error(`Gateway Error (${response.status}): ${errorText}`);
     }
     
-    log("Callback loaded successfully");
+    // 2. Perform Dynamic Import (SW guarantees integrity at this point)
+    const module = await import(/* @vite-ignore */ modulePath);
+    userCallback = module.onSynthesisComplete;
+    
+    if (typeof userCallback !== 'function') {
+      throw new Error(`Export 'onSynthesisComplete' is not a function in ${modulePath}`);
+    }
+    
+    log("Sovereign callback loaded successfully");
     postMessage({ type: "callback-loaded", instanceId });
   } catch (err) {
     userCallback = null; // Clear state on failure
     const errorVal = err instanceof Error ? err.message : String(err);
-    error("Failed to load callback module:", errorVal);
+    error("Failed to load sovereign callback module:", errorVal);
     postMessage({ type: "callback-failed", instanceId, error: errorVal });
     throw err;
   }

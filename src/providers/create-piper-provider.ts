@@ -52,7 +52,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   return {
     async init(config: FarmConfig) {
       const transitionId = ++lastTransitionId;
-      const { modelId, modelUrls, callbackModule } = config;
+      const { modelId, modelUrls, useCallback } = config;
 
       // 0. Ensure Service Worker is active and controlling the page
       if (typeof window !== 'undefined') {
@@ -112,7 +112,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       if (transitionId !== lastTransitionId) return;
 
       activeModelId = modelId;
-      activeCallbackPath = callbackModule?.path || null;
+      activeCallbackPath = useCallback ? 'piper-callback.js' : null;
       activeDefaultSpeakerId = config.defaultSpeakerId;
       loadingModelId = null;
     },

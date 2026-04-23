@@ -161,7 +161,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
         modelId: config.modelId,
         onnxRuntimePaths,
         piperPaths,
-        callbackModule: config.callbackModule,
+        useCallback: config.useCallback,
         defaultSpeakerId: config.defaultSpeakerId
       };
       const cpuInstances = config.cpuInstances ?? 2;

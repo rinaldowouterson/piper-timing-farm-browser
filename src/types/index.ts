@@ -78,18 +78,6 @@ export interface WorkerState {
 }
 
 /**
- * Configuration for the worker-thread callback module.
- */
-export interface CallbackModuleConfig {
-  /** Path to the JavaScript module to import in the worker. */
-  path: string;
-  /** Name of the exported function to invoke on synthesis completion. */
-  functionName: string;
-  /** Mandatory SHA-256 integrity hash for the module. */
-  integrity: string;
-}
-
-/**
  * Asset paths for ONNX Runtime.
  * SHA-256 hashes are optional — Service Worker handles verification.
  */
@@ -133,8 +121,8 @@ export interface PiperWorkerConfig {
 	onnxRuntimePaths: OnnxRuntimePaths;
 	piperPaths: PiperPaths;
 	instanceId?: number;
-  /** Optional callback to load in worker thread. */
-  callbackModule?: CallbackModuleConfig;
+  /** Optional boolean flag to enable loading of the 'piper-callback.js' worker sidecar. */
+  useCallback?: boolean;
   modelSha256?: string;
   configSha256?: string;
   /** Global default speaker ID for this worker instance. */
@@ -155,8 +143,8 @@ export interface FarmConfig {
 	piperPaths?: PiperPaths;
   /** Total number of worker instances to use for parallel synthesis. Defaults to 2. */
 	cpuInstances?: number;
-  /** Optional worker-thread callback for off-thread processing. */
-  callbackModule?: CallbackModuleConfig;
+  /** Optional boolean flag to enable off-thread processing via the 'piper-callback.js' worker sidecar. */
+  useCallback?: boolean;
   /** SHA-256 hashes for model integrity verification. */
   modelSha256?: string;
   configSha256?: string;
@@ -182,7 +170,7 @@ export interface PiperWorkerFarm {
    * Updates the farm with a new model configuration without 
    * destroying workers or clearing the queue. 
    */
-  reinit(config: Pick<FarmConfig, 'modelId' | 'modelUrls' | 'callbackModule' | 'defaultSpeakerId'>): Promise<void>;
+  reinit(config: Pick<FarmConfig, 'modelId' | 'modelUrls' | 'useCallback' | 'defaultSpeakerId'>): Promise<void>;
 	synthesize(
 		text: string,
 		options?: SynthesizeOptions
@@ -205,7 +193,7 @@ export interface PiperWorkerFarm {
 
 export type PiperWorkerMessageIn =
 	| { type: "init"; config: PiperWorkerConfig }
-  | { type: "load-callback"; modulePath: string; functionName: string; integrity?: string }
+  | { type: "load-callback"; useCallback: boolean }
 	| {
 			type: "synthesize";
 			text: string;

@@ -55,7 +55,7 @@ describe('Surgical Callback Handshake', () => {
     // 2. Surgical Reinit (Path A)
     const reinitPromise = pool.reinit({
       modelId: 'test-model', // Same model -> Path A
-      callbackModule: { path: 'custom.js', functionName: 'test' }
+      useCallback: true
     });
 
     // Verify it is still pending
@@ -90,7 +90,7 @@ describe('Surgical Callback Handshake', () => {
     // 2. Surgical Reinit triggers Path A first
     const reinitPromise = pool.reinit({
       modelId: 'test-model',
-      callbackModule: { path: 'bad.js', functionName: 'test' }
+      useCallback: true
     });
 
     // 3. Simulate Worker Failure
@@ -133,7 +133,7 @@ describe('Surgical Callback Handshake', () => {
     // 2. Start Surgical Load
     pool.reinit({
       modelId: 'test-model',
-      callbackModule: { path: 'custom.js', functionName: 'test' }
+      useCallback: true
     });
 
     // 3. Check Availability (should be blocked)

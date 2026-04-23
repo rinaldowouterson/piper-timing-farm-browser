@@ -132,14 +132,14 @@ class MockWorker {
         if (msg.type === 'init') {
             this.instanceId = msg.config.instanceId;
             this.modelId = msg.config.modelId;
-            // Track if callback module was configured
-            this.callbackLoaded = !!msg.config.callbackModule;
+            // Track if sovereign callback was enabled
+            this.callbackLoaded = !!msg.config.useCallback;
             // Always respond to init to avoid deadlocks
             setTimeout(() => this.emit('message', { type: 'ready', instanceId: this.instanceId }), 10);
         }
         if (msg.type === 'load-callback') {
-            // Handle explicit callback loading message
-            this.callbackLoaded = true;
+            // Handle explicit callback loading toggle
+            this.callbackLoaded = !!msg.useCallback;
             setTimeout(() => this.emit('message', { type: 'callback-loaded', instanceId: this.instanceId }), 10);
         }
         if (msg.type === 'synthesize') {

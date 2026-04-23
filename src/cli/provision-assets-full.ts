@@ -6,15 +6,13 @@ import { generateSidecarHash } from '../utils/resolve-sha256-node';
 const __dirname = (import.meta as any).dirname;
 
 /**
- * Sovereign Gateway Provisioning CLI for Piper Timing Farm.
+ * Asset Provisioning CLI for Piper Timing Farm.
  * 
- * Protocol: Action (Provision) / HC (Assets) / LC (Full).
- * Purpose: Allows developers to initialize their local environment with 
- * necessary WASM/Binary assets served through the /piper-gate/ Service Worker gateway.
+ * Provisions WASM/Binary assets and Service Worker for the integrity gateway.
  * 
  * Directory Structure:
  * - Infra assets (ORT WASM, Piper phonemize) → public/piper-gate/infra/
- * - Service Worker → public/piper-gate/control-asset-sw.js (for correct scope)
+ * - Service Worker → public/control-asset-sw.js (root, scope: /)
  */
 async function provision() {
   const cwd = process.cwd();
@@ -22,7 +20,6 @@ async function provision() {
   // FAIL FAST: Root check to prevent accidental sprawl
   if (!fs.existsSync(path.join(cwd, 'package.json'))) {
     console.error('\nError: npx piper-farm must be run from your project root (containing package.json).');
-    console.error('The Unified methodology requires project encapsulation to ensure stability.\n');
     process.exit(1);
   }
 
@@ -63,22 +60,21 @@ async function provision() {
   }
 
   if (command !== 'init') {
-    console.log('\nPiper Timing Farm CLI - Sovereign Gateway Edition');
+    console.log('\nPiper Timing Farm CLI');
     console.log('Usage:');
     console.log('  npx piper-farm init [target-path]  - Provision assets to /piper-gate/infra/');
     console.log('  npx piper-farm hash <file-path>    - Generate sidecar integrity hash\n');
     console.log('Default paths:');
     console.log(`  SvelteKit: static/piper-gate/infra/`);
-    console.log(`  Others:    public/piper-gate/infra/\n`);
+    console.log(`  Others:    public/piper-gate/infra/`);
+    console.log(`  Service Worker: public/control-asset-sw.js (root, scope: /)\n`);
     process.exit(0);
   }
 
   const absTargetDir = path.resolve(cwd, targetDir);
 
   // Source resolution: Resolved relative to this compiled script in dist/.
-  // After "The Great Flattening", all assets live in dist/assets/ — a sibling
-  // of the compiled cli.js (dist/cli.js).
-  // Consumers always have this folder. If it is missing, the install is corrupt.
+  // All assets live in dist/assets/ — a sibling of cli.js.
   const sourceAssetsDir = path.resolve(__dirname, 'assets');
 
   if (!fs.existsSync(sourceAssetsDir)) {
@@ -92,17 +88,17 @@ async function provision() {
 
   copyFiles(sourceAssetsDir, absTargetDir, targetDir);
 
-  // PROVISION SERVICE WORKER: Copy to /piper-gate/ directory for correct scope
-  // The SW must be served from /piper-gate/ to intercept /piper-gate/* requests
+  // PROVISION SERVICE WORKER: Copy to root (public/ or static/) for scope: /
+  // Root scope allows consumers to expand interception to additional paths
   const swSource = path.join(__dirname, 'control-asset-sw.js');
-  const swTargetDir = path.dirname(absTargetDir); // e.g., public/piper-gate/
+  const swTargetDir = publicDir; // e.g., public/ or static/
   const swTarget = path.join(swTargetDir, 'control-asset-sw.js');
 
   if (fs.existsSync(swSource)) {
     console.log(`\nProvisioning Service Worker to ${path.relative(cwd, swTargetDir)}...`);
     fs.copyFileSync(swSource, swTarget);
     console.log(`  [OK] control-asset-sw.js`);
-    console.log(`  [OK] SW scope: /piper-gate/`);
+    console.log(`  [OK] SW scope: / (root)`);
   } else {
     console.warn(`\n[Warning] Could not find Service Worker source at ${swSource}. Skipping SW provisioning.`);
   }
@@ -129,8 +125,8 @@ function copyFiles(sourceDir: string, absTargetDir: string, relativeDisplayPath:
   console.log(`\nSuccess! ${files.length} infra assets provisioned.`);
   console.log('Next steps:');
   console.log(`1. Ensure your server serves /piper-gate/ directory`);
-  console.log('2. Service Worker is registered at /piper-gate/control-asset-sw.js');
-  console.log('3. Use the library normally: import { ... } from "piper-timing-farm"\n');
+  console.log('2. Service Worker registered at /control-asset-sw.js (scope: /)');
+  console.log('3. Use the library: import { ... } from "piper-timing-farm"\n');
 }
 
 provision().catch(err => {

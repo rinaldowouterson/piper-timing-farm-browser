@@ -47,7 +47,7 @@ describe('CLI > Unified Framework Orchestration', () => {
 
         expect(fs.existsSync(path.join(project, 'public/piper-gate/infra/ort.wasm.min.mjs'))).toBe(true);
         expect(fs.existsSync(path.join(project, 'public/piper-gate/infra/piper_phonemize.wasm'))).toBe(true);
-        expect(fs.existsSync(path.join(project, 'public/piper-gate/control-asset-sw.js'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'public/control-asset-sw.js'))).toBe(true);  // SW at root
     });
 
     it('should provision assets to SvelteKit Skeleton (static/assets)', () => {
@@ -60,7 +60,7 @@ describe('CLI > Unified Framework Orchestration', () => {
 
         expect(fs.existsSync(path.join(project, 'static/piper-gate/infra/ort.wasm.min.mjs'))).toBe(true);
         expect(fs.existsSync(path.join(project, 'static/piper-gate/infra/piper_phonemize.wasm'))).toBe(true);
-        expect(fs.existsSync(path.join(project, 'static/piper-gate/control-asset-sw.js'))).toBe(true);
+        expect(fs.existsSync(path.join(project, 'static/control-asset-sw.js'))).toBe(true);  // SW at root
     });
 
     it('should reject execution outside project root (no package.json)', () => {

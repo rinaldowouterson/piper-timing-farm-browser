@@ -30,11 +30,11 @@ function isConfigSame(a: PiperWorkerConfig, b: PiperWorkerConfig): boolean {
          a.defaultSpeakerId === b.defaultSpeakerId &&
          JSON.stringify(a.onnxRuntimePaths) === JSON.stringify(b.onnxRuntimePaths) &&
          JSON.stringify(a.piperPaths) === JSON.stringify(b.piperPaths) &&
-         JSON.stringify(a.callbackModule) === JSON.stringify(b.callbackModule);
+         a.useCallback === b.useCallback;
 }
 
 function isSurgicalCandidate(oldConfig: PiperWorkerConfig, newConfig: PiperWorkerConfig): boolean {
-  // Candidate for surgical update if ONLY callbackModule or defaultSpeakerId changed
+  // Candidate for surgical update if ONLY useCallback or defaultSpeakerId changed
   // (Both are lightweight worker-side state updates)
   const isCoreSame = oldConfig.modelId === newConfig.modelId &&
                      JSON.stringify(oldConfig.onnxRuntimePaths) === JSON.stringify(newConfig.onnxRuntimePaths) &&
@@ -42,7 +42,7 @@ function isSurgicalCandidate(oldConfig: PiperWorkerConfig, newConfig: PiperWorke
   
   if (!isCoreSame) return false;
 
-  const isCallbackChanged = JSON.stringify(oldConfig.callbackModule) !== JSON.stringify(newConfig.callbackModule);
+  const isCallbackChanged = oldConfig.useCallback !== newConfig.useCallback;
   const isSpeakerChanged = oldConfig.defaultSpeakerId !== newConfig.defaultSpeakerId;
 
   return isCallbackChanged || isSpeakerChanged;
@@ -170,7 +170,7 @@ export function createWorkerPool(
           timestamp: Date.now()
         });
 
-        const callbackModule = newConfig.callbackModule!;
+        
         
         try {
           const loadPromises = workers.map(w => {
@@ -189,9 +189,7 @@ export function createWorkerPool(
               // 2. Dispatch surgical update
               w.worker.postMessage({
                 type: "load-callback",
-                modulePath: callbackModule.path,
-                functionName: callbackModule.functionName,
-                integrity: callbackModule.integrity
+                useCallback: newConfig.useCallback || false
               });
             });
           });
@@ -413,7 +411,7 @@ function createWorker(
     onMessage({ type: "error", instanceId: id, error: "Worker crashed" });
   };
 
-  console.log(`[WorkerPool] Spawning worker ${id} with callback:`, config.callbackModule?.path);
+  console.log(`[WorkerPool] Spawning worker ${id} with useCallback:`, config.useCallback || false);
   worker.postMessage({ type: "init", config: { ...config, instanceId: id } });
 
   return { id, worker, busy: false, modelId: config.modelId };

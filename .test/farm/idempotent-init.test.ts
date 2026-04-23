@@ -89,14 +89,14 @@ describe('Idempotent Init & Surgical Reinit', () => {
     // Surgical reinit (callback change)
     // Pass partial config with undefined to test removeUndefined resilience
     await farm.reinit({ 
-      callbackModule: { path: 'new-path', functionName: 'new-fn' },
+      useCallback: true,
       modelId: mockConfig.modelId
     });
     
     // Verify load-callback was sent to existing worker
     expect(firstWorker0.postMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: 'load-callback',
-      modulePath: 'new-path'
+      useCallback: true
     }));
     
     // Verify NO new workers were spawned

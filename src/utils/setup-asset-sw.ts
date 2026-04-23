@@ -1,22 +1,22 @@
 /**
- * Registers the Sovereign Gateway Service Worker.
+ * Registers the Asset Gateway Service Worker.
  *
- * The SW script (`control-asset-sw.js`) must be served from `/piper-gate/`
- * to correctly intercept all `/piper-gate/*` requests.
+ * The SW script (`control-asset-sw.js`) is served from root with scope `/`,
+ * allowing consumers to expand interception to additional asset paths.
  * 
- * Use `npx piper-farm init` to provision the SW to `public/piper-gate/`.
+ * Use `npx piper-farm init` to provision the SW to `public/` (root).
  *
- * @param swUrl - Path to the SW script. Defaults to `/piper-gate/control-asset-sw.js`.
- *                Override for subpath deployments (e.g. `/myapp/piper-gate/control-asset-sw.js`).
+ * @param swUrl - Path to the SW script. Defaults to `/control-asset-sw.js`.
+ *                Override for subpath deployments (e.g. `/myapp/control-asset-sw.js`).
  */
-export async function setupAssetSW(swUrl = '/piper-gate/control-asset-sw.js'): Promise<ServiceWorkerRegistration> {
+export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<ServiceWorkerRegistration> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
     console.warn('[setup-asset-sw] Service Worker not supported in this environment');
     return Promise.reject(new Error('SW not supported'));
   }
 
   const reg = await navigator.serviceWorker.register(swUrl, {
-    scope: '/piper-gate/',
+    scope: '/',
     type: 'module',
   });
 

@@ -57,6 +57,7 @@ const INFRA_SHA256_REGISTRY: Record<string, string> = {
   'piper_phonemize.data':        '29f1025eb23a5b5c192cd14a6efbce4509402ff265405072ee6f7d1a09b78f8c',
   'piper_phonemize.js':          'fef0c2fc442d24fdef5c7c7cc37d5da2314407640fe11ab1bfe347c723dff19b',
   'piper_phonemize.wasm':        'b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6',
+  'piper-callback.js':           '', // User-provided; integrity must be set by the consumer at runtime.
 };
 
 /** CDN fallback URLs for infra assets */
@@ -241,6 +242,11 @@ async function resolveAsset(assetPath: string, request: Request): Promise<Respon
 
   const [directory, filename] = pathParts;
 
+  // 0. Sovereign Callback Interception
+  if (assetPath === 'piper-callback.js' || filename === 'piper-callback.js') {
+    return await resolvePiperCallback();
+  }
+
   if (directory === 'infra') {
     return await resolveInfraAsset(filename, mimeType);
   } else if (directory === 'voices') {
@@ -334,6 +340,43 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
   } catch (err) {
     console.error(`[piper-gate] CDN fetch failed for ${filename}:`, err);
     return new Response(`[piper-gate] CDN unreachable for: ${filename}`, { status: 502 });
+  }
+}
+
+/**
+ * Resolves the user-provided sovereign callback script.
+ * Enforces strict SHA-256 verification against the INFRA_SHA256_REGISTRY.
+ */
+async function resolvePiperCallback(): Promise<Response> {
+  const expectedSha256 = INFRA_SHA256_REGISTRY['piper-callback.js'];
+  
+  if (!expectedSha256) {
+    return new Response(`[piper-gate] Integrity Hash Missing: The 'piper-callback.js' hash must be explicitly set in the INFRA_SHA256_REGISTRY.`, { status: 404 });
+  }
+
+  try {
+    // Attempt to fetch the script from the local origin
+    const localResponse = await fetch(`/piper-callback.js`);
+    if (!localResponse.ok) {
+      return new Response(`[piper-gate] File Missing: 'piper-callback.js' could not be found at the origin root.`, { status: 404 });
+    }
+
+    const data = await localResponse.arrayBuffer();
+    const isValid = await verifySha256(data, expectedSha256);
+    
+    if (!isValid) {
+      console.error(`[piper-gate] Integrity Violation: 'piper-callback.js' hash mismatch.`);
+      return new Response(`[piper-gate] Integrity Violation: The fetched 'piper-callback.js' does not match the expected SHA-256 hash.`, { status: 403 });
+    }
+
+    console.log(`[piper-gate] Sovereign Callback verified successfully.`);
+    return new Response(data, {
+      status: 200,
+      headers: { 'Content-Type': 'text/javascript', 'x-piper-sw': 'verified' },
+    });
+  } catch (err) {
+    console.error(`[piper-gate] Sovereign Callback fetch failed:`, err);
+    return new Response(`[piper-gate] Internal Server Error: Failed to resolve callback.`, { status: 500 });
   }
 }
 
