@@ -60,14 +60,6 @@ export function createAssetDownloadController(): DownloadController {
         entry.file.progress = total > 0 ? downloaded / total : 0;
         entry.options.onProgress({ ...entry.file });
       }
-    } else if (type === 'complete') {
-      // Mark download as complete in registry
-      const modelId = filename.replace(/\.(onnx|onnx\.json)$/, '');
-      const entry = registry.get(modelId);
-      if (entry) {
-        entry.file.status = 'complete';
-        entry.file.progress = 1.0;
-      }
     } else if (type === 'error') {
       // Handle Generalized Error Broadcasts from Service Worker
       const { filename, message, code, stack } = event.data;
@@ -78,33 +70,14 @@ export function createAssetDownloadController(): DownloadController {
         entry.file.status = 'error';
         entry.file.error = `${code}: ${message}`;
         
-        // Wrap the error with full diagnostic info
-        const swError = new Error(message);
-        (swError as any).code = code;
-        (swError as any).stack = stack;
-        (swError as any).filename = filename;
+        // Enrich Error with SW diagnostic metadata
+        const swError = Object.assign(new Error(message), { code, filename });
+        if (stack) swError.stack = stack;
         
         entry.reject(swError);
       }
     }
   };
-
-  // ---------------------------------------------------------------------------
-  // OPFS Cleanup (for cancel/clear operations)
-  // ---------------------------------------------------------------------------
-
-  async function purgeOpfs(modelId: string): Promise<void> {
-    try {
-      const root = await navigator.storage.getDirectory();
-      const voicesDir = await root.getDirectoryHandle("voices");
-      // Clean up all files for this model
-      for (const ext of ["onnx", "onnx.json"]) {
-        try {
-          await voicesDir.removeEntry(`${modelId}.${ext}`);
-        } catch { /* ignore if not exists */ }
-      }
-    } catch { /* ignore root handle failures */ }
-  }
 
   // ---------------------------------------------------------------------------
   // Download Execution: fetch via /piper-gate/ gateway
@@ -171,9 +144,6 @@ export function createAssetDownloadController(): DownloadController {
       
       entry.file.status = "error";
       entry.file.error = err instanceof Error ? err.message : String(err);
-      
-      // Clean up partial files on any error to ensure a clean slate for retries
-      await purgeOpfs(modelId);
       
       entry.reject(err);
     }
@@ -258,7 +228,7 @@ export function createAssetDownloadController(): DownloadController {
       const entry = registry.get(modelId);
       if (!entry) return;
 
-      // 1. Abort the logic (safe even if pending or already completed)
+      // 1. Abort in-flight fetch (SW drops RAM buffer, nothing written to OPFS)
       entry.controller.abort();
       
       // 2. Reject the promise so listeners aren't suspended indefinitely
@@ -273,9 +243,8 @@ export function createAssetDownloadController(): DownloadController {
         queue.splice(idx, 1);
       }
 
-      // 4. Wipe from registry and clean up OPFS
+      // 4. Wipe from registry
       registry.delete(modelId);
-      await purgeOpfs(modelId);
 
       // 5. If this was the active download, force the queue to move on
       if (activeId === modelId) {
@@ -288,19 +257,15 @@ export function createAssetDownloadController(): DownloadController {
       // Clear queue so nothing new starts
       queue.length = 0;
 
-      const results: Promise<void>[] = [];
-      for (const [id, entry] of registry) {
-        // Abort and reject if it was in-flight or waiting
+      for (const [, entry] of registry) {
         entry.controller.abort();
         if (entry.file.status === "pending" || entry.file.status === "downloading") {
           entry.reject(new Error("CancelledAll"));
         }
-        results.push(purgeOpfs(id));
       }
 
       registry.clear();
       activeId = null;
-      await Promise.all(results);
     },
 
     getState() {
@@ -311,19 +276,6 @@ export function createAssetDownloadController(): DownloadController {
       return snapshot;
     },
 
-    async clearAndRedownloadModel(modelId) {
-      const existing = registry.get(modelId);
-      if (!existing) return;
-
-      const { urls, expectedSha256, options } = existing;
-
-      // 1. Fully cancel the previous entry
-      await this.cancel(modelId);
-
-      // 2. Re-request from scratch (this will add to registry and queue)
-      return this.request(modelId, urls, expectedSha256, options);
-    },
-    
     destroy() {
       progressChannel.close();
     },

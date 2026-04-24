@@ -1,58 +1,72 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createPiperWorkerFarm } from '../../src/farm/create-piper-worker-farm';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { clearModelCache, deletePiperModel } from '../../src/utils/resolve-cache-clearing';
 
-describe('PiperWorkerFarm: Cache Management', () => {
-    let mockRoot: any;
+// Mock setupAssetSW to avoid real SW registration
+vi.mock('../../src/utils/setup-asset-sw', () => ({
+    setupAssetSW: vi.fn().mockResolvedValue(undefined),
+}));
 
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
+
+describe('Sovereign Cache Management', () => {
     beforeEach(() => {
-        mockRoot = {
-            removeEntry: vi.fn().mockResolvedValue(undefined)
-        };
-        
-        // Mock the global navigator.storage
-        (global as any).navigator = {
-            storage: {
-                getDirectory: vi.fn().mockResolvedValue(mockRoot)
-            }
-        };
-
-        // Mock the Worker since we're in a Node environment
-        (global as any).Worker = vi.fn().mockImplementation(() => ({
-            postMessage: vi.fn(),
-            terminate: vi.fn(),
-            addEventListener: vi.fn(),
-            removeEventListener: vi.fn()
-        }));
+        mockFetch.mockReset();
     });
 
-    it('should terminate the pool and remove the voices directory', async () => {
-        const farm = createPiperWorkerFarm();
-        
-        // Mock init to verify it's cleared later
-        await farm.clearPiperModelCache();
+    describe('clearModelCache', () => {
+        it('should send DELETE /piper-gate/voices/ to the Sovereign Gateway', async () => {
+            mockFetch.mockResolvedValue({ ok: true, status: 204 });
 
-        expect(mockRoot.removeEntry).toHaveBeenCalledWith('voices', { recursive: true });
+            await clearModelCache();
+
+            expect(mockFetch).toHaveBeenCalledWith('/piper-gate/voices/', { method: 'DELETE' });
+        });
+
+        it('should accept 204 No Content as success', async () => {
+            mockFetch.mockResolvedValue({ ok: false, status: 204 });
+
+            await expect(clearModelCache()).resolves.toBeUndefined();
+        });
+
+        it('should throw on gateway error (500)', async () => {
+            mockFetch.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
+
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await expect(clearModelCache()).rejects.toThrow('Gateway returned 500');
+            spy.mockRestore();
+        });
+
+        it('should throw on network failure', async () => {
+            mockFetch.mockRejectedValue(new Error('Network unreachable'));
+
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await expect(clearModelCache()).rejects.toThrow('Network unreachable');
+            spy.mockRestore();
+        });
     });
 
-    it('should be idempotent and ignore NotFoundError', async () => {
-        const farm = createPiperWorkerFarm();
-        
-        const err = new Error('OPFS Entry not found');
-        err.name = 'NotFoundError';
-        mockRoot.removeEntry.mockRejectedValue(err);
+    describe('deletePiperModel', () => {
+        it('should send DELETE /piper-gate/voices/{modelId} to the Sovereign Gateway', async () => {
+            mockFetch.mockResolvedValue({ ok: true, status: 204 });
 
-        // This should NOT throw
-        await expect(farm.clearPiperModelCache()).resolves.toBeUndefined();
-    });
+            await deletePiperModel('en_US-lessac-medium');
 
-    it('should throw on other storage errors', async () => {
-        const farm = createPiperWorkerFarm();
-        
-        mockRoot.removeEntry.mockRejectedValue(new Error('Atomic Explosion'));
+            expect(mockFetch).toHaveBeenCalledWith('/piper-gate/voices/en_US-lessac-medium', { method: 'DELETE' });
+        });
 
-        // Suppress expected console.error from production code
-        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-        await expect(farm.clearPiperModelCache()).rejects.toThrow('Atomic Explosion');
-        spy.mockRestore();
+        it('should accept 204 No Content as success', async () => {
+            mockFetch.mockResolvedValue({ ok: false, status: 204 });
+
+            await expect(deletePiperModel('en_US-lessac-medium')).resolves.toBeUndefined();
+        });
+
+        it('should throw on gateway error (400)', async () => {
+            mockFetch.mockResolvedValue({ ok: false, status: 400, statusText: 'Bad Request' });
+
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await expect(deletePiperModel('bad-model')).rejects.toThrow('Gateway returned 400');
+            spy.mockRestore();
+        });
     });
 });

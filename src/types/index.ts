@@ -246,14 +246,12 @@ export interface DownloadController {
     expectedSha256?: { onnx?: string; config?: string },
     options?: { onProgress?: (state: DownloadState) => void }
   ): Promise<void>;
-  /** Cancel a download, remove from queue, and purge any partial OPFS files. Entry is deleted from registry. */
+  /** Cancel an in-flight download and remove from queue. Does not touch OPFS (RAM-first: nothing is written until verified). */
   cancel(modelId: string): Promise<void>;
-  /** Cancel all pending and downloading items with cleanup. */
+  /** Cancel all pending and downloading items. */
   cancelAll(): Promise<void>;
   /** Returns a snapshot of every model's download lifecycle. */
   getState(): Map<string, DownloadState>;
-  /** Purge cached OPFS files for a model and re-download from scratch. */
-  clearAndRedownloadModel(modelId: string): Promise<void>;
   /** Clean up all listeners and channels (BroadcastChannel) */
   destroy(): void;
 }
@@ -267,11 +265,6 @@ export interface BroadcastProgressPayload {
   total: number;
 }
 
-export interface BroadcastCompletePayload {
-  type: 'complete';
-  filename: string;
-}
-
 export interface BroadcastErrorPayload {
   type: 'error';
   filename: string;
@@ -282,5 +275,4 @@ export interface BroadcastErrorPayload {
 
 export type BroadcastPayload = 
   | BroadcastProgressPayload 
-  | BroadcastCompletePayload 
   | BroadcastErrorPayload;

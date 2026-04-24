@@ -1,23 +1,47 @@
+import { setupAssetSW } from "./setup-asset-sw";
+
 /**
  * Atomic, session-independent OPFS cache clearing.
  * 
- * Logic:
- * 1. Accesses the Origin Private File System root.
- * 2. Recursively deletes the 'voices' directory.
- * 3. Handles 'NotFoundError' gracefully (idempotent).
+ * Sovereign Gateway Architecture:
+ * - Delegates all storage operations to the Service Worker via DELETE /piper-gate/voices/
+ * - Uses setupAssetSW() as a guard to ensure the gateway is active.
  */
-export async function resolveCacheClearing(): Promise<void> {
-    if (!navigator?.storage?.getDirectory) return;
-
+export async function clearModelCache(): Promise<void> {
     try {
-        const root = await navigator.storage.getDirectory();
-        await root.removeEntry('voices', { recursive: true });
-    } catch (err: any) {
-        // Idempotent: Ignore if it doesn't exist.
-        if (err.name === 'NotFoundError') {
-            return;
+        // Ensure Sovereign Gateway is active before dispatching deletion
+        await setupAssetSW().catch(() => {});
+
+        const res = await fetch('/piper-gate/voices/', { method: 'DELETE' });
+        
+        if (!res.ok && res.status !== 204) {
+            throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
         }
+        
+        console.log('[PiperFarm] Cache cleared via Sovereign Gateway');
+    } catch (err) {
         console.error('[PiperFarm] Cache clearing failed:', err);
+        throw err;
+    }
+}
+
+/**
+ * Delete a specific model's cached OPFS files.
+ * Routes through the Sovereign Gateway for atomic cleanup.
+ */
+export async function deletePiperModel(modelId: string): Promise<void> {
+    try {
+        await setupAssetSW().catch(() => {});
+
+        const res = await fetch(`/piper-gate/voices/${modelId}`, { method: 'DELETE' });
+
+        if (!res.ok && res.status !== 204) {
+            throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
+        }
+
+        console.log(`[PiperFarm] Model deleted from cache: ${modelId}`);
+    } catch (err) {
+        console.error(`[PiperFarm] Model deletion failed for ${modelId}:`, err);
         throw err;
     }
 }

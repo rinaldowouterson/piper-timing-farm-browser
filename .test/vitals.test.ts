@@ -78,16 +78,15 @@ describe('CLI > Unified Framework Orchestration', () => {
     it('Should successfully dispose of model cache (clearPiperModelCache)', async () => {
         const farm = createPiperWorkerFarm();
         
-        // Mock OPFS for Vitest/JSDOM
-        const mockRemoveEntry = vi.fn().mockResolvedValue(undefined);
-        (global as any).navigator.storage = {
-            getDirectory: vi.fn().mockResolvedValue({
-                removeEntry: mockRemoveEntry
-            })
-        };
+        // Mock fetch for Sovereign Gateway DELETE delegation
+        const originalFetch = globalThis.fetch;
+        const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+        globalThis.fetch = mockFetch;
 
         await farm.clearPiperModelCache();
-        expect(mockRemoveEntry).toHaveBeenCalledWith('voices', { recursive: true });
+        expect(mockFetch).toHaveBeenCalledWith('/piper-gate/voices/', { method: 'DELETE' });
         expect(farm.isInitialized()).toBe(false);
+        
+        globalThis.fetch = originalFetch;
     });
 });

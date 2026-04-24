@@ -9,7 +9,7 @@ import type {
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { createAssetDownloadController } from "../farm/control-asset-download";
 import { PIPER_MODELS } from "../expose-piper-models";
-import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
+import { clearModelCache, deletePiperModel} from "../utils/resolve-cache-clearing";
 import { setupAssetSW } from "../utils/setup-asset-sw";
 
 /**
@@ -26,7 +26,7 @@ import { setupAssetSW } from "../utils/setup-asset-sw";
 export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & { 
   getActiveModelId: () => string | null;
   cancelDownload: (modelId: string) => Promise<void>;
-  clearAndRedownloadModel: (modelId: string) => Promise<void>;
+  deletePiperModel: (modelId: string) => Promise<void>;
   getDownloadState: () => Map<string, DownloadState>;
   onLog: (listener: (log: WorkerLogPayload) => void) => () => void;
 } {
@@ -155,7 +155,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       }
       
       // 2. Wipe storage (safe after handles are closed)
-      await resolveCacheClearing();
+      await clearModelCache();
       
       activeModelId = null;
       loadingModelId = null;
@@ -164,15 +164,13 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
     isInitialized: () => farm?.isInitialized() ?? false,
     getActiveModelId: () => activeModelId,
 
-    /** Cancel a specific model's download. Purges OPFS partial files. */
+    /** Cancel a specific model's in-flight download. Does not touch OPFS. */
     async cancelDownload(modelId: string) {
       await downloader.cancel(modelId);
     },
 
-    /** Purge cached OPFS files for a model and re-download from scratch. */
-    async clearAndRedownloadModel(modelId: string) {
-      await downloader.clearAndRedownloadModel(modelId);
-    },
+    /** Delete a specific model's cached OPFS files via the Sovereign Gateway. */
+    deletePiperModel,
 
     /** Returns a snapshot of every model's download lifecycle. */
     getDownloadState() {

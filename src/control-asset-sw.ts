@@ -186,15 +186,14 @@ const progressChannel = new BroadcastChannel('piper-download-progress');
  * Ensures the developer sees EXACTLY why a provision or fetch failed.
  */
 function broadcastError(filename: string, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  const stack = error instanceof Error ? error.stack : undefined;
+  const isError = error instanceof Error;
   
   progressChannel.postMessage({
     type: 'error',
     filename,
-    message,
-    stack,
-    code: (error as any)?.name || 'UNKNOWN_ERROR'
+    message: isError ? error.message : String(error),
+    stack: isError ? error.stack : undefined,
+    code: isError ? error.name : 'UNKNOWN_ERROR'
   });
 }
 
@@ -222,6 +221,12 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
 
   const assetPath = url.pathname.slice('/piper-gate/'.length);
   if (!assetPath) return;
+
+  // Sovereign Deletion Orchestration
+  if (event.request.method === 'DELETE') {
+    event.respondWith(processOpfsDeletion(assetPath));
+    return;
+  }
 
   event.respondWith(resolveAsset(assetPath, event.request));
 });
@@ -479,6 +484,7 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
         repo: hfInfo.repo,
         revision: hfInfo.revision,
         path: hfInfo.path,
+        fetch: (url, init) => fetch(url, { ...init, signal: request.signal })
       });
       if (!blob) {
         return new Response(`[piper-gate] HF Hub failed to resolve: ${filename}`, { status: 502 });
@@ -551,12 +557,6 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
 
     // Write to OPFS
     await writeToOpfs(OPFS_VOICES_DIR, filename, data);
-
-    // Broadcast completion
-    progressChannel.postMessage({
-      type: 'complete',
-      filename,
-    });
 
     console.log(`[piper-gate] Voice asset downloaded and verified: ${filename}`);
 
@@ -660,6 +660,54 @@ async function deleteFromOpfs(directory: string, filename: string): Promise<void
     await dir.removeEntry(filename);
   } catch {
     // File doesn't exist — ignore
+  }
+}
+
+/**
+ * Processes OPFS deletion requests.
+ * Supports recursive directory wipe (voices/) or specific model removal.
+ */
+async function processOpfsDeletion(assetPath: string): Promise<Response> {
+  try {
+    const root = await navigator.storage.getDirectory();
+
+    // 1. Full Directory Wipe (e.g. DELETE /piper-gate/voices/)
+    if (assetPath === 'voices/' || assetPath === 'voices') {
+      try {
+        await root.removeEntry('voices', { recursive: true });
+        console.log('[piper-gate] Voice cache cleared (recursive)');
+      } catch (err) {
+        const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
+        if (!isNotFound) throw err;
+      }
+      return new Response(null, { status: 204 });
+    }
+
+    // 2. Specific Model Wipe (e.g. DELETE /piper-gate/voices/model-id)
+    if (assetPath.startsWith('voices/')) {
+      const modelId = assetPath.slice('voices/'.length);
+      if (!modelId) return new Response('[piper-gate] Missing modelId for deletion', { status: 400 });
+
+      const voicesDir = await root.getDirectoryHandle('voices', { create: false }).catch(() => null);
+      if (voicesDir) {
+        // Atomic cleanup of both primary files
+        for (const ext of ['.onnx', '.onnx.json']) {
+          try {
+            await voicesDir.removeEntry(`${modelId}${ext}`);
+          } catch (err) {
+            const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
+            if (!isNotFound) throw err;
+          }
+        }
+        console.log(`[piper-gate] Model assets purged: ${modelId}`);
+      }
+      return new Response(null, { status: 204 });
+    }
+
+    return new Response(`[piper-gate] Unsupported deletion path: ${assetPath}`, { status: 400 });
+  } catch (err) {
+    console.error(`[piper-gate] Deletion failed for ${assetPath}:`, err);
+    return new Response(`[piper-gate] Internal OPFS Error`, { status: 500 });
   }
 }
 

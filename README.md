@@ -373,7 +373,7 @@ Assets persist in the Origin Private File System across sessions.
 
 #### Directory Structure
 
-| Directory | Contents | Cleared by `clearPiperModelCache()` |
+| Directory | Contents | Cleared by `clearPiperModelCache()` / `deletePiperModel()` |
 | :--- | :--- | :--- |
 | `voices/` | Model weights (`.onnx`, `.onnx.json`) | Yes |
 | `infra/` | Engine binaries (WASM, glue JS) | No |
@@ -386,7 +386,7 @@ Assets persist in the Origin Private File System across sessions.
 - **After cache clear**: Re-download models only (~5-15MB per model)
 - **Subsequent sessions**: OPFS load (~50ms)
 
-Implementation: [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts).
+Implementation: [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts) — delegates to the Service Worker via `DELETE /piper-gate/voices/`.
 
 ---
 
@@ -396,7 +396,7 @@ The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manage
 
 - **Registry + Queue**: `Map` for state tracking, `Array` for FIFO ordering
 - **Deduplication**: Duplicate requests return the same promise
-- **Per-model cancellation**: Abort and purge OPFS for specific models
+- **Per-model cancellation**: Abort in-flight downloads (RAM-first: nothing written to OPFS until verified)
 - **Progress observability**: Callback (push) and snapshot (pull) mechanisms
 
 #### State Machine
@@ -404,15 +404,15 @@ The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manage
 ```text
 pending → downloading → complete
               ↓
-            error (OPFS purged)
+            error
 ```
 
 | State | Meaning | Available Action |
 | :--- | :--- | :--- |
 | `pending` | Queued | `cancelDownload()` to remove |
 | `downloading` | Active transfer | `cancelDownload()` to abort |
-| `complete` | Cached, verified | `clearAndRedownloadModel()` if corrupted |
-| `error` | Failed, OPFS cleaned | Retry with `init()` |
+| `complete` | Cached, verified | `deletePiperModel()` to purge cache |
+| `error` | Failed | Retry with `init()` |
 
 #### Progress Monitoring
 
@@ -543,7 +543,7 @@ provider.cancelSynthesis(requestId: string);
 provider.cancelAllSynthesis();
 await provider.clearPiperModelCache();
 await provider.cancelDownload(modelId: string);
-await provider.clearAndRedownloadModel(modelId: string);
+await provider.deletePiperModel(modelId: string);
 provider.terminate();
 
 // Properties

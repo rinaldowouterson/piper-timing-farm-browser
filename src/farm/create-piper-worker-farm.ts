@@ -10,7 +10,7 @@ import type {
   PiperPaths
 } from "../types";
 import { createWorkerPool } from "./control-worker-pool";
-import { resolveCacheClearing } from "../utils/resolve-cache-clearing";
+import { clearModelCache } from "../utils/resolve-cache-clearing";
 
 // ---------------------------------------------------------------------------
 // Default Asset Paths (Service Worker Gateway)
@@ -271,7 +271,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       activeRequests.clear();
 
       // 2. Perform the nuke
-      await resolveCacheClearing();
+      await clearModelCache();
     },
 
     isInitialized: () => pool.isInitialized(),
