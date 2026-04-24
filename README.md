@@ -39,7 +39,6 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 - [Model Registry](#model-registry)
 - [Implementation Details](#implementation-details)
 - [Debugging & Troubleshooting](#debugging--troubleshooting)
-- [Browser Requirements](#browser-requirements)
 - [Type Definitions](#type-definitions)
 - [Migration Guide](#migration-guide)
 - [FAQ](#faq)
@@ -83,7 +82,7 @@ await provider.init({
 });
 ```
 
-The Service Worker handles model fetching and OPFS caching. Subsequent sessions load from cache (~50ms) rather than network.
+The Service Worker handles model fetching and OPFS caching. Subsequent sessions load from cache rather than network.
 
 ### Step 3: Synthesize
 
@@ -219,7 +218,7 @@ The Service Worker is registered at root (`/control-asset-sw.js`) with scope `/`
 2. **Local server**: If not cached or corrupted, check the local `/piper-gate/` directory
 3. **CDN fallback**: If missing locally, fetch from jsDelivr CDN
 
-This architecture keeps large model binaries (30-50MB) out of the main thread's memory heap. The Service Worker streams data directly to OPFS using `FileSystemWritableFileStream`.
+This architecture keeps large model binaries out of the main thread's memory heap. The Service Worker streams data directly to OPFS using `FileSystemWritableFileStream`.
 
 **Root Scope Design**: The SW intercepts same-origin requests matching `/piper-gate/*` by default. Consumers can modify [`control-asset-sw.ts`](src/control-asset-sw.ts:220) to expand interception to additional paths (e.g., custom asset directories). Cross-origin requests pass through unaffected.
 
@@ -332,7 +331,7 @@ When `provider.init({ modelId: 'model-c' })` is called:
 1. **Queue**: Model added to FIFO download queue (sequential downloads prevent OPFS write contention)
 2. **Download**: Fetch `.onnx` model and `.onnx.json` config with progress tracking
 3. **Verify**: Mandatory SHA-256 integrity check
-4. **Cache**: Stream to OPFS without RAM buffering
+4. **Cache**: Buffer in memory for SHA-256 verification, then write to OPFS
 
 ```text
 User requests: Model A → Model B → Model C (rapid succession)
@@ -378,13 +377,13 @@ Assets persist in the Origin Private File System across sessions.
 | `voices/` | Model weights (`.onnx`, `.onnx.json`) | Yes |
 | `infra/` | Engine binaries (WASM, glue JS) | No |
 
-**Rationale**: Cache clearing purges user models but preserves core engine binaries (~29MB). Subsequent sessions only re-download model weights.
+**Rationale**: Cache clearing purges user models but preserves core engine binaries. Subsequent sessions only re-download model weights.
 
 #### Cache Performance
 
-- **First session**: Download all assets (~30MB)
-- **After cache clear**: Re-download models only (~5-15MB per model)
-- **Subsequent sessions**: OPFS load (~50ms)
+- **First session**: Download all assets
+- **After cache clear**: Re-download models only
+- **Subsequent sessions**: OPFS load
 
 Implementation: [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts) — delegates to the Service Worker via `DELETE /piper-gate/voices/`.
 
@@ -732,19 +731,6 @@ ortInstance.env.wasm.numThreads = 1;
 
 **Rationale**: A 4-worker pool with 4 internal threads per worker would spawn 16 threads, causing context-switch overhead. External load balancing is more efficient.
 
-### OPFS Fast-Path
-
-Cached assets bypass network:
-
-```typescript
-if (file.size > 0) {
-  return await file.arrayBuffer();  // ~50ms vs ~5s network
-}
-```
-
-### Low-Memory Streaming
-
-Large models (30MB+) stream directly from fetch `ReadableStream` to `FileSystemWritableFileStream` without RAM buffering, preventing OOM on low-end devices.
 
 ---
 
@@ -781,17 +767,6 @@ The library uses single-threaded workers (`numThreads = 1`), requiring no COOP/C
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
-
----
-
-## Browser Requirements
-
-| API | Purpose | Support |
-| :--- | :--- | :--- |
-| Web Workers | Parallel synthesis | All modern browsers |
-| OPFS | Asset caching | Chrome 86+, Firefox 111+, Safari 15.2+ |
-| Web Crypto (SHA-256) | Integrity verification | Secure contexts only |
-
 ---
 
 ## Type Definitions
@@ -836,7 +811,7 @@ Standard Piper models output audio only. The patched models used by this library
 
 ### Does the library work offline?
 
-Yes. After the first visit downloads and caches assets, subsequent sessions load from OPFS (~50ms) without network access.
+Yes. After the first visit downloads and caches assets, subsequent sessions load from OPFS without network access.
 
 ### Why is SHA-256 verification mandatory?
 
