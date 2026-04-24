@@ -15,6 +15,12 @@ export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<Serv
     return Promise.reject(new Error('SW not supported'));
   }
 
+  // Fast-path: If the Sovereign Gateway is already active and controlling the page, 
+  // return the existing registration immediately.
+  if (navigator.serviceWorker.controller) {
+    return navigator.serviceWorker.ready;
+  }
+
   const reg = await navigator.serviceWorker.register(swUrl, {
     scope: '/',
     type: 'module',
