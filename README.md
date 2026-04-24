@@ -182,11 +182,11 @@ The library requires modern browsers supporting Web Workers, WebAssembly, and OP
 
 ---
 
-## Architecture
+## Architecture & Asset Management
 
 ### Worker Farm Pattern
 
-The library employs a Worker Farm architecture where persistent Web Workers process synthesis requests in parallel:
+The library employs a Worker Farm architecture where Web Workers process synthesis requests in parallel:
 
 ```text
 Main Thread                    Worker Pool
@@ -200,61 +200,15 @@ Main Thread                    Worker Pool
 └─────────────┘
 ```
 
-### Components
+### Asset Delivery & OPFS Storage
 
-| Component | File | Role |
-| :--- | :--- | :--- |
-| Provider | [`create-piper-provider.ts`](src/providers/create-piper-provider.ts) | High-level API, lifecycle management |
-| Service Worker | [`control-asset-sw.ts`](src/control-asset-sw.ts) | Asset interception, OPFS streaming |
-| Worker Farm | [`create-piper-worker-farm.ts`](src/farm/create-piper-worker-farm.ts) | Queue management, worker distribution |
-| Synthesis Worker | [`process-piper-synthesis.worker.ts`](src/worker/process-piper-synthesis.worker.ts) | ONNX inference, phonemization |
-| Download Controller | [`control-asset-download.ts`](src/farm/control-asset-download.ts) | Model download orchestration |
+To keep large model binaries out of the main thread's memory heap, a Service Worker intercepts requests to `/piper-gate/*`.
 
-### Service Worker Role
+The resolution sequence is:
+1. **OPFS (fast path)**: Read from the Origin Private File System and strictly verify SHA-256. Served immediately if valid.
+2. **Network**: Stream directly to OPFS while performing SHA-256 validation in-memory.
 
-The Service Worker is registered at root (`/control-asset-sw.js`) with scope `/`, enabling interception of all same-origin requests. By default, it handles `/piper-gate/*` paths with a three-tier resolution chain:
-
-1. **OPFS (fast path)**: If the asset exists in OPFS, it is read and SHA-256 verified in-memory. If valid, it is served immediately.
-2. **Local server**: If not cached or corrupted, check the local `/piper-gate/` directory
-3. **CDN fallback**: If missing locally, fetch from jsDelivr CDN
-
-This architecture keeps large model binaries out of the main thread's memory heap. The Service Worker streams data directly to OPFS using `FileSystemWritableFileStream`.
-
-**Root Scope Design**: The SW intercepts same-origin requests matching `/piper-gate/*` by default. Consumers can modify [`control-asset-sw.ts`](src/control-asset-sw.ts:220) to expand interception to additional paths (e.g., custom asset directories). Cross-origin requests pass through unaffected.
-
-```typescript
-// control-asset-sw.ts — fetch event handler (default)
-if (url.origin !== sw.location.origin) return;  // Skip cross-origin
-if (!url.pathname.startsWith('/piper-gate/')) return;  // Consumers can modify this
-```
-
----
-
-## Asset Resolution
-
-All binary dependencies resolve through a single logical path: `/piper-gate/*`.
-
-| Asset Type | Path Pattern | Source |
-| :--- | :--- | :--- |
-| Piper WASM | `/piper-gate/infra/piper_phonemize.*` | `@diffusionstudio/piper-wasm` |
-| ONNX Runtime | `/piper-gate/infra/ort*` | `onnxruntime-web` |
-| Voice Models | `/piper-gate/voices/*.onnx` | HuggingFace (default) or custom URLs |
-
-### Resolution Chain
-
-1. **OPFS check**: Verify asset integrity using SHA-256 (mandatory on every read)
-2. **Auto-fetch SHA-256**: For HuggingFace URLs, retrieve hash from HF API (`lfs.oid` field)
-3. **Network fetch**: Stream asset if missing or hash mismatch
-4. **In-memory verification**: SHA-256 check before OPFS write
-5. **Cache write**: Persist verified asset to OPFS
-
-### Local Hosting Benefits
-
-While CDN fallback works automatically, local hosting provides:
-
-- **Network independence**: Corporate firewalls often block public CDNs
-- **Offline-first operation**: Assets available on first visit in PWA contexts
-- **Version consistency**: Guaranteed binary versions across deployment stages
+The cache clears selectively (`deletePiperModel()`) purging only model weights (`/piper-gate/voices/`) while keeping core engine binaries (`/piper-gate/infra/`) intact.
 
 ---
 
@@ -262,27 +216,7 @@ While CDN fallback works automatically, local hosting provides:
 
 ### Parallel FIFO Sequencer
 
-When multiple synthesis requests arrive simultaneously, workers process them in parallel. However, results must return in request order to maintain deterministic behavior.
-
-**Problem**: A short text may complete synthesis before a longer text submitted earlier.
-
-**Solution**: The FIFO sequencer buffers completed results until all preceding requests resolve:
-
-```typescript
-// Queue state during parallel processing
-Queue: [
-  { requestId: 'a', text: 'Long text...', result: null },      // Processing
-  { requestId: 'b', text: 'Hello', result: { audioData: ... }}, // Complete, waiting
-  { requestId: 'c', text: 'World', result: null }              // Processing
-]
-
-// Drain sequence:
-// 1. 'a' completes → drain 'a'
-// 2. 'b' already has result → immediately drain 'b'
-// 3. 'c' completes → drain 'c'
-```
-
-Implementation: [`processQueue()`](src/farm/create-piper-worker-farm.ts) in `create-piper-worker-farm.ts`.
+When multiple synthesis requests arrive simultaneously, workers process them in parallel. To guarantee determinism, results are internally buffered and returned exactly in request order (FIFO), even if a later short request finishes before an earlier long request.
 
 ### Request Correlation
 
@@ -320,98 +254,17 @@ State transitions: `queued → processing → completed` (or `cancelled` / `erro
 
 ---
 
-### Model Switching Lifecycle
+### Seamless Model Switching
 
-Model initialization proceeds through two sequential phases.
-
-#### Phase 1: Download Queue
-
-When `provider.init({ modelId: 'model-c' })` is called:
-
-1. **Queue**: Model added to FIFO download queue (sequential downloads prevent OPFS write contention)
-2. **Download**: Fetch `.onnx` model and `.onnx.json` config with progress tracking
-3. **Verify**: Mandatory SHA-256 integrity check
-4. **Cache**: Buffer in memory for SHA-256 verification, then write to OPFS
-
-```text
-User requests: Model A → Model B → Model C (rapid succession)
-
-[T0] Model A starts downloading
-[T1] Model B queued behind A
-[T2] Model C queued behind B
-[T3] Model A completes → Phase 2 begins for A
-[T4] Model B starts downloading
-[T5] Model B completes → Model C starts
-[T6] Model C completes → all cached
-```
-
-**Queue skipping**: Call `provider.cancelDownload(modelId)` to remove pending downloads and allow subsequent models to start immediately.
-
-#### Phase 2: Worker Pool Transition
-
-After download completion, the library creates new Web Workers:
-
-1. **Stale check**: Verify this is still the most recent `init()` request
-2. **Shadow pool**: Spawn new workers loading the ONNX model from OPFS
-3. **Promotion**: Once all shadow workers report `ready`, replace active pool
-4. **Retirement**: Old workers finish current tasks, then terminate
-
-**Memory bound**: At most one active pool + one shadow pool exist simultaneously. Rapid `init()` calls trigger shadow pool abortion before new pool creation.
-
-Implementation: [`reinit()`](src/farm/control-worker-pool.ts) in `control-worker-pool.ts`.
-
-#### Surgical Re-initialization
-
-If only the `callbackModule` changes (same model), workers dynamically import the new callback script without reloading WASM/ONNX. This avoids model reload overhead.
+Calling `provider.init({ modelId: 'new-model' })` triggers a background download without blocking active processing. The queue continues serving the current model while the new model downloads, verifies, and initializes. Once the new workers are ready, an atomic swap routes incoming requests to the new pool.
 
 ---
 
-### OPFS Read-Through Cache
 
-Assets persist in the Origin Private File System across sessions.
-
-#### Directory Structure
-
-| Directory | Contents | Cleared by `clearPiperModelCache()` / `deletePiperModel()` |
-| :--- | :--- | :--- |
-| `voices/` | Model weights (`.onnx`, `.onnx.json`) | Yes |
-| `infra/` | Engine binaries (WASM, glue JS) | No |
-
-**Rationale**: Cache clearing purges user models but preserves core engine binaries. Subsequent sessions only re-download model weights.
-
-#### Cache Performance
-
-- **First session**: Download all assets
-- **After cache clear**: Re-download models only
-- **Subsequent sessions**: OPFS load
-
-Implementation: [`resolve-cache-clearing.ts`](src/utils/resolve-cache-clearing.ts) — delegates to the Service Worker via `DELETE /piper-gate/voices/`.
-
----
 
 ### Download Controller
 
-The [`createAssetDownloadController`](src/farm/control-asset-download.ts) manages model downloads with:
-
-- **Registry + Queue**: `Map` for state tracking, `Array` for FIFO ordering
-- **Deduplication**: Duplicate requests return the same promise
-- **Per-model cancellation**: Abort in-flight downloads (RAM-first: nothing written to OPFS until verified)
-- **Progress observability**: Callback (push) and snapshot (pull) mechanisms
-
-#### State Machine
-
-```text
-pending → downloading → complete
-              ↓
-            error
-```
-
-| State | Meaning | Available Action |
-| :--- | :--- | :--- |
-| `pending` | Queued | `cancelDownload()` to remove |
-| `downloading` | Active transfer | `cancelDownload()` to abort |
-| `complete` | Cached, verified | `deletePiperModel()` to purge cache |
-| `error` | Failed | Retry with `init()` |
+The internal download controller tracks model download progress across the application, deduplicates redundant requests for the same model, and supports per-model download cancellation. Progress can be monitored via the `getDownloadState()` polling method or the `onProgress` callback during initialization.
 
 #### Progress Monitoring
 
@@ -563,12 +416,23 @@ Lower-level API without download management. Use when handling asset provisionin
 ```typescript
 const farm = createPiperWorkerFarm();
 
+// Methods
 await farm.init(config: FarmConfig);
 await farm.reinit(config);
 await farm.synthesize(text, options);
+farm.cancelSynthesis(requestId);
+farm.cancelAllSynthesis();
 await farm.clearPiperModelCache();
-farm.onLog((log) => console.log(`[Worker ${log.workerId}] ${log.message}`));
 farm.terminate();
+
+// Properties
+farm.isInitialized(): boolean;
+farm.getActiveModelId(): string | null;
+farm.metrics: { queueLength, busyWorkers, totalWorkers };
+
+// Events
+farm.onQueueStatus(listener: (status: RequestStatusPayload) => void): () => void;
+farm.onLog(listener: (log: WorkerLogPayload) => void): () => void;
 ```
 
 ### `FarmConfig`
@@ -608,6 +472,7 @@ interface SynthesizeOptions {
 
 ```typescript
 interface AudioSynthesisResult {
+  requestId: string;                           // Correlation ID
   audioData: Float32Array;                     // Raw audio samples
   sampleRate: number;                          // Audio sample rate
   durationMs: number;                          // Total duration
@@ -714,25 +579,7 @@ interface PiperModelDefinition {
 
 ---
 
-## Implementation Details
 
-### Zero-Copy Transfer
-
-Audio buffers (`Float32Array`) transfer via `postMessage` with `transfer`, moving memory ownership without copying. Callback result `TypedArray` objects also transfer when detected.
-
-### Single-Threaded Workers
-
-Each worker uses `ortInstance.env.wasm.numThreads = 1` to prevent internal ONNX threading from competing with the worker pool:
-
-```typescript
-// process-piper-synthesis.worker.ts
-ortInstance.env.wasm.numThreads = 1;
-```
-
-**Rationale**: A 4-worker pool with 4 internal threads per worker would spawn 16 threads, causing context-switch overhead. External load balancing is more efficient.
-
-
----
 
 ## Debugging & Troubleshooting
 
