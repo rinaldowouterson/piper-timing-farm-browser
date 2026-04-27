@@ -18,9 +18,30 @@ export async function clearModelCache(): Promise<void> {
             throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
         }
         
-        console.log('[PiperFarm] Cache cleared via Sovereign Gateway');
+        console.log('[PiperFarm] Voice cache cleared via Sovereign Gateway');
     } catch (err) {
-        console.error('[PiperFarm] Cache clearing failed:', err);
+        console.error('[PiperFarm] Voice cache clearing failed:', err);
+        throw err;
+    }
+}
+
+/**
+ * Clear the Piper infra asset cache (WASM, worker scripts).
+ * Delegates to the Sovereign Gateway.
+ */
+export async function clearInfraCache(): Promise<void> {
+    try {
+        await setupAssetSW().catch(() => {});
+
+        const res = await fetch('/piper-gate/infra/', { method: 'DELETE' });
+
+        if (!res.ok && res.status !== 204) {
+            throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
+        }
+
+        console.log('[PiperFarm] Infra asset cache cleared via Sovereign Gateway');
+    } catch (err) {
+        console.error('[PiperFarm] Infra cache clearing failed:', err);
         throw err;
     }
 }

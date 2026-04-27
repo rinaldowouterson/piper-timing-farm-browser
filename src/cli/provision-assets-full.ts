@@ -74,7 +74,7 @@ async function provision() {
   const absTargetDir = path.resolve(cwd, targetDir);
 
   // Source resolution: Resolved relative to this compiled script in dist/.
-  // All assets live in dist/assets/ — a sibling of cli.js.
+  // All assets live in dist/piper-gate/ — a sibling of cli.js.
   const sourceAssetsDir = path.resolve(__dirname, 'assets');
 
   if (!fs.existsSync(sourceAssetsDir)) {

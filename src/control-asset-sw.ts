@@ -57,6 +57,7 @@ const INFRA_SHA256_REGISTRY: Record<string, string> = {
   'piper_phonemize.data':        '29f1025eb23a5b5c192cd14a6efbce4509402ff265405072ee6f7d1a09b78f8c',
   'piper_phonemize.js':          'fef0c2fc442d24fdef5c7c7cc37d5da2314407640fe11ab1bfe347c723dff19b',
   'piper_phonemize.wasm':        'b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6',
+  'process-piper-synthesis.worker.js': '9cb8b5e5c9c32cb6de1efe3a49ad815ee689365ae43517a3750e9c7210e1f6fe',
   'piper-callback.js':           '', // User-provided; integrity must be set by the consumer at runtime.
 };
 
@@ -198,6 +199,21 @@ function broadcastError(filename: string, error: unknown) {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostic Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Identifies if a filename belongs to the Piper infra or voice registry.
+ * Used for diagnostic path-deviation warnings.
+ */
+function isPiperAsset(filename: string): boolean {
+  if (filename in INFRA_SHA256_REGISTRY) return true;
+  // Check for voices (modelId.onnx or modelId.onnx.json)
+  if (filename.endsWith('.onnx') || filename.endsWith('.onnx.json')) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
@@ -212,8 +228,18 @@ sw.addEventListener('activate', (event: ExtendableEvent) => {
 sw.addEventListener('fetch', (event: FetchEvent) => {
   const url = new URL(event.request.url);
 
-  // Bypass mechanism for debugging: ?bypass-sw=true
-  if (url.searchParams.has('bypass-sw')) return;
+  // Diagnostic: Catch Piper assets requested via non-standard paths
+  if (url.origin === sw.location.origin && !url.pathname.startsWith('/piper-gate/')) {
+    const filename = url.pathname.split('/').pop() || '';
+    if (isPiperAsset(filename)) {
+      console.warn(
+        `[piper-gate] [Path Deviation] Detected request for Piper asset '${filename}' at non-gateway path: ${url.pathname}. ` +
+        `This request bypasses Service Worker integrity verification and OPFS caching. ` +
+        `Please update the requester to use: /piper-gate/.../${filename}`
+      );
+    }
+  }
+
 
   // Only intercept same-origin /piper-gate/* requests
   if (url.origin !== sw.location.origin) return;
@@ -285,13 +311,13 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
   if (cached) {
     const isValid = await verifySha256(cached, expectedSha256);
     if (isValid) {
-      console.log(`[piper-gate] Infra asset verified from OPFS: ${filename}`);
+      console.log(`[piper-gate] [Cache Hit] '${filename}' verified from OPFS.`);
       return new Response(cached, {
         status: 200,
         headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
       });
     } else {
-      console.warn(`[piper-gate] Corrupted infra asset detected, deleting: ${filename}`);
+      console.log(`[piper-gate] [Stale Cache] OPFS integrity mismatch for '${filename}'. Deleting stale entry to trigger re-fetch.`);
       await deleteFromOpfs(OPFS_INFRA_DIR, filename);
     }
   }
@@ -304,7 +330,7 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
       const isValid = await verifySha256(data, expectedSha256);
       if (isValid) {
         await writeToOpfs(OPFS_INFRA_DIR, filename, data);
-        console.log(`[piper-gate] Infra asset downloaded and verified: ${filename}`);
+        console.log(`[piper-gate] [Cache Restored] '${filename}' successfully re-downloaded, verified, and persisted to OPFS.`);
         return new Response(data, {
           status: 200,
           headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
@@ -438,13 +464,13 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
   if (cached) {
     const isValid = await verifySha256(cached, expectedSha256);
     if (isValid) {
-      console.log(`[piper-gate] Voice asset verified from OPFS: ${filename}`);
+      console.log(`[piper-gate] [Cache Hit] Voice asset verified from OPFS: ${filename}`);
       return new Response(cached, {
         status: 200,
         headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
       });
     } else {
-      console.warn(`[piper-gate] Corrupted voice asset detected, deleting: ${filename}`);
+      console.log(`[piper-gate] [Stale Cache] Voice integrity mismatch for '${filename}'. Purging stale entry.`);
       await deleteFromOpfs(OPFS_VOICES_DIR, filename);
     }
   }
@@ -558,7 +584,7 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
     // Write to OPFS
     await writeToOpfs(OPFS_VOICES_DIR, filename, data);
 
-    console.log(`[piper-gate] Voice asset downloaded and verified: ${filename}`);
+    console.log(`[piper-gate] [Cache Restored] Voice asset '${filename}' downloaded and verified.`);
 
     // MEMORY FIX: If requester only wanted to trigger cache, return 204 No Content
     if (isCacheDownload) {
@@ -671,11 +697,23 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
   try {
     const root = await navigator.storage.getDirectory();
 
-    // 1. Full Directory Wipe (e.g. DELETE /piper-gate/voices/)
+    // 1. Full Voices Wipe (e.g. DELETE /piper-gate/voices/)
     if (assetPath === 'voices/' || assetPath === 'voices') {
       try {
         await root.removeEntry('voices', { recursive: true });
         console.log('[piper-gate] Voice cache cleared (recursive)');
+      } catch (err) {
+        const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
+        if (!isNotFound) throw err;
+      }
+      return new Response(null, { status: 204 });
+    }
+
+    // 2. Full Infra Wipe (e.g. DELETE /piper-gate/infra/)
+    if (assetPath === 'infra/' || assetPath === 'infra') {
+      try {
+        await root.removeEntry('infra', { recursive: true });
+        console.log('[piper-gate] Infra asset cache cleared (recursive)');
       } catch (err) {
         const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
         if (!isNotFound) throw err;

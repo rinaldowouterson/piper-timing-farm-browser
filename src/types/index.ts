@@ -170,7 +170,7 @@ export interface PiperWorkerFarm {
    * Updates the farm with a new model configuration without 
    * destroying workers or clearing the queue. 
    */
-  reinit(config: Pick<FarmConfig, 'modelId' | 'modelUrls' | 'useCallback' | 'defaultSpeakerId'>): Promise<void>;
+  reinit(config: Partial<FarmConfig>): Promise<void>;
 	synthesize(
 		text: string,
 		options?: SynthesizeOptions
@@ -179,6 +179,7 @@ export interface PiperWorkerFarm {
 	cancelAllSynthesis(): void;
 	terminate(): void;
   clearPiperModelCache(): Promise<void>;
+  clearPiperInfraCache(): Promise<void>;
   isInitialized(): boolean;
   getActiveModelId(): string | null;
   prepareTransition(targetModelId: string): void;

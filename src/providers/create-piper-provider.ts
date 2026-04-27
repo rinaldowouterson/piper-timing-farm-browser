@@ -9,7 +9,7 @@ import type {
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { createAssetDownloadController } from "../farm/control-asset-download";
 import { PIPER_MODELS } from "../expose-piper-models";
-import { clearModelCache, deletePiperModel} from "../utils/resolve-cache-clearing";
+import { clearModelCache, deletePiperModel, clearInfraCache } from "../utils/resolve-cache-clearing";
 import { setupAssetSW } from "../utils/setup-asset-sw";
 
 /**
@@ -157,6 +157,20 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       // 2. Wipe storage (safe after handles are closed)
       await clearModelCache();
       
+      activeModelId = null;
+      loadingModelId = null;
+    },
+
+    async clearPiperInfraCache() {
+      // 1. Terminate active instance first to release OPFS locks
+      if (farm) {
+        farm.terminate();
+        farm = null;
+      }
+
+      // 2. Wipe storage (safe after handles are closed)
+      await clearInfraCache();
+
       activeModelId = null;
       loadingModelId = null;
     },

@@ -378,7 +378,7 @@ function createWorker(
   pendingCallbackLoads: Map<number, { resolve: () => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }>
 ): WorkerState {
   // Use Vite-safe worker instantiation if possible, otherwise use new URL
-  const worker = new Worker(new URL("../worker/process-piper-synthesis.worker.ts", import.meta.url), {
+  const worker = new Worker('/piper-gate/infra/process-piper-synthesis.worker.js', {
     type: "module",
     /* @vite-ignore */
     name: `PiperWorker-${id}`
@@ -407,12 +407,29 @@ function createWorker(
     }
   };
   worker.onerror = (e) => {
-    console.error(`Worker ${id} error:`, e);
-    onMessage({ type: "error", instanceId: id, error: "Worker crashed" });
+    let errorMessage = "Worker crashed unexpectedly";
+    if (e instanceof ErrorEvent) {
+      errorMessage = e.message || `Runtime error in ${e.filename}:${e.lineno}`;
+    } else {
+      errorMessage = "Worker failed to initialize or load (possible MIME mismatch or Network Error)";
+    }
+    console.error(`[WorkerPool] [Worker Error] Instance ${id}: ${errorMessage}`, e);
+    onMessage({ type: "error", instanceId: id, error: errorMessage });
   };
 
   console.log(`[WorkerPool] Spawning worker ${id} with useCallback:`, config.useCallback || false);
-  worker.postMessage({ type: "init", config: { ...config, instanceId: id } });
+  
+  // SCRUB CONFIG: Ensure no functions (like onProgress) are sent to worker (DataCloneError)
+  const workerConfig = {
+    modelId: config.modelId,
+    onnxRuntimePaths: config.onnxRuntimePaths,
+    piperPaths: config.piperPaths,
+    instanceId: id,
+    useCallback: config.useCallback,
+    defaultSpeakerId: config.defaultSpeakerId
+  };
+
+  worker.postMessage({ type: "init", config: workerConfig });
 
   return { id, worker, busy: false, modelId: config.modelId };
 }

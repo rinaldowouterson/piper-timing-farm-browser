@@ -9,7 +9,7 @@
 export { createPiperWorkerFarm } from './farm/create-piper-worker-farm';
 export { createPiperProvider } from './providers/create-piper-provider';
 export { createAssetDownloadController } from './farm/control-asset-download';
-export { clearModelCache, deletePiperModel } from './utils/resolve-cache-clearing';
+export { clearModelCache, clearInfraCache, deletePiperModel } from './utils/resolve-cache-clearing';
 export { PIPER_MODELS, PIPER_REPO_BASE_URL } from './expose-piper-models';
 export type { PiperModelDefinition } from './expose-piper-models';
 export type * from './types';

@@ -24,7 +24,7 @@ function cliPermissionPlugin() {
  * High-performance Vite build for library-mode distribution.
  * 
  * Asset Strategy ("The Great Flattening"):
- * All binary assets are consolidated into a single `dist/assets/` directory.
+ * All binary assets are consolidated into a single `dist/piper-gate/` directory.
  * - ORT assets sourced from node_modules (version-locked, no drift)
  * - Piper assets sourced from node_modules (version-locked, no drift)
  *
@@ -117,7 +117,6 @@ export default defineConfig({
     rollupOptions: {
       external: [
         'onnxruntime-web', 
-        '@huggingface/hub',
         '@diffusionstudio/piper-wasm',
         'node:fs', 
         'node:path', 

@@ -7,10 +7,11 @@ import type {
   RequestStatusPayload,
   WorkerLogPayload,
   OnnxRuntimePaths,
-  PiperPaths
+  PiperPaths,
+  PiperWorkerConfig
 } from "../types";
 import { createWorkerPool } from "./control-worker-pool";
-import { clearModelCache } from "../utils/resolve-cache-clearing";
+import { clearModelCache, clearInfraCache } from "../utils/resolve-cache-clearing";
 
 // ---------------------------------------------------------------------------
 // Default Asset Paths (Service Worker Gateway)
@@ -170,7 +171,17 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     },
 
     async reinit(config) {
-      await pool.reinit(config);
+      // 1. Scrub config to ensure only worker-relevant properties are passed to the pool
+      // This prevents onProgress functions from leaking into postMessage calls
+      const workerConfig: Partial<PiperWorkerConfig> = {};
+      
+      if (config.modelId) workerConfig.modelId = config.modelId;
+      if (config.useCallback !== undefined) workerConfig.useCallback = config.useCallback;
+      if (config.defaultSpeakerId !== undefined) workerConfig.defaultSpeakerId = config.defaultSpeakerId;
+      if (config.onnxRuntimePaths) workerConfig.onnxRuntimePaths = config.onnxRuntimePaths;
+      if (config.piperPaths) workerConfig.piperPaths = config.piperPaths;
+
+      await pool.reinit(workerConfig);
       processQueue();
     },
 
@@ -272,6 +283,16 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
 
       // 2. Perform the nuke
       await clearModelCache();
+    },
+
+    async clearPiperInfraCache() {
+      // 1. Force release all OPFS locks by killing workers
+      pool.terminate();
+      queue.length = 0;
+      activeRequests.clear();
+
+      // 2. Perform the nuke
+      await clearInfraCache();
     },
 
     isInitialized: () => pool.isInitialized(),
