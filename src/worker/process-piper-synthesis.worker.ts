@@ -167,7 +167,7 @@ export async function toggleCallback(enabled: boolean) {
     return;
   }
 
-  const modulePath = new URL('/piper-callback.js', self.location.href).href;
+  const modulePath = new URL('./piper-callback.js', self.location.href).href;
   log(`Loading sovereign callback: ${modulePath}`);
   
   try {

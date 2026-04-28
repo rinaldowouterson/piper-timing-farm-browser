@@ -17,6 +17,7 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 - **Service Worker Gateway**: A mandatory security layer that intercepts all asset requests to enforce SHA-256 integrity and OPFS caching.
 - **OPFS-based asset caching**: Models and WASM binaries persist in the Origin Private File System for offline operation.
 - **SHA-256 integrity verification**: All binary assets undergo mandatory cryptographic verification on every read before execution.
+- **Cross-Origin Isolation Ready**: The Service Worker gateway implements mandatory `Cross-Origin-Resource-Policy` (CORP) headers, ensuring the engine functions in hardened security environments (`COOP`/`COEP`).
 
 ---
 
@@ -90,6 +91,28 @@ console.log(result.metadata.durations);      // Per-phoneme timing (Float32Array
 console.log(result.metadata.phonemes);       // Phoneme symbols (string[])
 ```
 
+### Step 4: Play Audio
+
+Interfacing the raw `Float32Array` with the Web Audio API is straightforward. 
+
+```typescript
+const audioCtx = new AudioContext();
+
+const buffer = audioCtx.createBuffer(1, result.audioData.length, result.sampleRate);
+
+// Performance Tip: Pass result.audioData directly for zero-allocation playback.
+// Note: Use 'new Float32Array(result.audioData)' when COOP/COEP headers are enabled.
+
+buffer.copyToChannel(result.audioData, 0);
+
+const source = audioCtx.createBufferSource();
+source.buffer = buffer;
+source.connect(audioCtx.destination);
+
+// Ensure this call happens inside a user interaction (click/touch)
+if (audioCtx.state === 'suspended') await audioCtx.resume();
+source.start();
+```
 ---
 
 ## Architecture & Asset Management
@@ -154,6 +177,10 @@ export function onSynthesisComplete(result) {
 ### Error Propagation
 
 The Service Worker does not fail silently. All integrity mismatches, download failures, or path deviations are broadcast via the `piper-download-progress` `BroadcastChannel`. The library automatically listens to this channel to propagate errors to your `synthesize()` calls.
+
+### Cross-Origin Isolation (COOP/COEP)
+
+The library is fully compatible with "Cross-Origin Isolation." The Service Worker gateway automatically appends `Cross-Origin-Resource-Policy: same-origin` to all intercepted assets (`/piper-gate/*`). This ensures that browsers do not block WASM or worker scripts when the parent application implements hardened security headers (`COOP`/`COEP`).
 
 **Security Hardening**: There are **no bypass mechanisms** (e.g., `?bypass-sw=true`). If an asset fails verification, it is deleted from cache and must be re-downloaded from a trusted source.
 

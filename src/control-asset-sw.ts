@@ -1,5 +1,5 @@
 /**
- * Sovereign Service Worker Gateway for Piper Timing Farm.
+ * Service Worker Proxy for Piper Timing Farm.
  *
  * Intercepts ALL `/piper-gate/*` requests with mandatory SHA-256 verification.
  * Resolution chain: OPFS cache (verify) → Local server → CDN fallback.
@@ -43,7 +43,7 @@ async function verifySha256(buffer: ArrayBuffer, expected: string): Promise<bool
 }
 
 // ---------------------------------------------------------------------------
-// Constants: Hardcoded Integrity Manifest
+// Constants: SHA-256 Hash Registry
 // ---------------------------------------------------------------------------
 
 const OPFS_INFRA_DIR = 'infra';
@@ -57,7 +57,7 @@ const INFRA_SHA256_REGISTRY: Record<string, string> = {
   'piper_phonemize.data':        '29f1025eb23a5b5c192cd14a6efbce4509402ff265405072ee6f7d1a09b78f8c',
   'piper_phonemize.js':          'fef0c2fc442d24fdef5c7c7cc37d5da2314407640fe11ab1bfe347c723dff19b',
   'piper_phonemize.wasm':        'b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6',
-  'process-piper-synthesis.worker.js': '9bbf4214abbc3c24724e3ba012e0f3d416bd7e35d3ac9f96c0f87f3108c7821b',
+  'process-piper-synthesis.worker.js': 'a011f34f2186cad5adacc84c57280ce21f550305f437216b80cb8d5431434bd7',
   'piper-callback.js':           '', // User-provided; integrity must be set by the consumer at runtime.
 };
 
@@ -248,7 +248,7 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
   const assetPath = url.pathname.slice('/piper-gate/'.length);
   if (!assetPath) return;
 
-  // Sovereign Deletion Orchestration
+  // OPFS Deletion Coordination
   if (event.request.method === 'DELETE') {
     event.respondWith(processOpfsDeletion(assetPath));
     return;
@@ -258,12 +258,11 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
 });
 
 // ---------------------------------------------------------------------------
-// Resolution Chain: OPFS (verify) → Local → CDN
+// Fallback Logic: OPFS (verify) → Local → CDN
 // ---------------------------------------------------------------------------
 
 async function resolveAsset(assetPath: string, request: Request): Promise<Response> {
   try {
-  const mimeType = resolveMimeType(assetPath);
 
   // Parse path: either "infra/filename" or "voices/modelId.ext"
   const pathParts = assetPath.split('/');
@@ -273,15 +272,15 @@ async function resolveAsset(assetPath: string, request: Request): Promise<Respon
 
   const [directory, filename] = pathParts;
 
-  // 0. Sovereign Callback Interception
+  // 0. User-provided callback handling
   if (assetPath === 'piper-callback.js' || filename === 'piper-callback.js') {
     return await resolvePiperCallback();
   }
 
   if (directory === 'infra') {
-    return await resolveInfraAsset(filename, mimeType);
+    return await resolveInfraAsset(filename);
   } else if (directory === 'voices') {
-    return await resolveVoiceAsset(filename, mimeType, request);
+    return await resolveVoiceAsset(filename, request);
   } else {
     return new Response(`[piper-gate] Unknown directory: ${directory}`, { status: 400 });
   }
@@ -300,7 +299,7 @@ async function resolveAsset(assetPath: string, request: Request): Promise<Respon
  * Resolves infra assets (ORT WASM, Piper phonemize).
  * SHA-256 is hardcoded in INFRA_SHA256_REGISTRY.
  */
-async function resolveInfraAsset(filename: string, mimeType: string): Promise<Response> {
+async function resolveInfraAsset(filename: string): Promise<Response> {
   const expectedSha256 = INFRA_SHA256_REGISTRY[filename];
   if (!expectedSha256) {
     return new Response(`[piper-gate] Unknown infra asset: ${filename}`, { status: 404 });
@@ -312,10 +311,7 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
     const isValid = await verifySha256(cached, expectedSha256);
     if (isValid) {
       console.log(`[piper-gate] [Cache Hit] '${filename}' verified from OPFS.`);
-      return new Response(cached, {
-        status: 200,
-        headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
-      });
+      return createVerifiedResponse(cached, { filename });
     } else {
       console.log(`[piper-gate] [Stale Cache] OPFS integrity mismatch for '${filename}'. Deleting stale entry to trigger re-fetch.`);
       await deleteFromOpfs(OPFS_INFRA_DIR, filename);
@@ -331,10 +327,7 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
       if (isValid) {
         await writeToOpfs(OPFS_INFRA_DIR, filename, data);
         console.log(`[piper-gate] [Cache Restored] '${filename}' successfully re-downloaded, verified, and persisted to OPFS.`);
-        return new Response(data, {
-          status: 200,
-          headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
-        });
+        return createVerifiedResponse(data, { filename });
       } else {
         console.error(`[piper-gate] Local infra asset integrity mismatch: ${filename}`);
         // Fall through to CDN
@@ -364,10 +357,7 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
 
     await writeToOpfs(OPFS_INFRA_DIR, filename, data);
     console.log(`[piper-gate] Infra asset from CDN verified: ${filename}`);
-    return new Response(data, {
-      status: 200,
-      headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
-    });
+    return createVerifiedResponse(data, { filename });
   } catch (err: unknown) {
     console.error(`[piper-gate] CDN fetch failed for ${filename}:`, err);
     return new Response(`[piper-gate] CDN unreachable for: ${filename}`, { status: 502 });
@@ -375,18 +365,31 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
 }
 
 /**
- * Resolves the user-provided sovereign callback script.
+ * Resolves the user-provided callback script.
  * Enforces strict SHA-256 verification against the INFRA_SHA256_REGISTRY.
  */
 async function resolvePiperCallback(): Promise<Response> {
-  const expectedSha256 = INFRA_SHA256_REGISTRY['piper-callback.js'];
+  const filename = 'piper-callback.js';
+  const expectedSha256 = INFRA_SHA256_REGISTRY[filename];
   
   if (!expectedSha256) {
     return new Response(`[piper-gate] Integrity Hash Missing: The 'piper-callback.js' hash must be explicitly set in the INFRA_SHA256_REGISTRY.`, { status: 404 });
   }
 
+  // 1. Check OPFS cache
+  const cached = await readFromOpfs(OPFS_INFRA_DIR, filename);
+  if (cached) {
+    const isValid = await verifySha256(cached, expectedSha256);
+    if (isValid) {
+      console.log(`[piper-gate] [Cache Hit] Callback verified from OPFS.`);
+      return createVerifiedResponse(cached, { filename });
+    } else {
+      await deleteFromOpfs(OPFS_INFRA_DIR, filename);
+    }
+  }
+
   try {
-    // Attempt to fetch the script from the local origin
+    // 2. Fetch from origin root
     const localResponse = await fetch(`/piper-callback.js`);
     if (!localResponse.ok) {
       return new Response(`[piper-gate] File Missing: 'piper-callback.js' could not be found at the origin root.`, { status: 404 });
@@ -400,13 +403,12 @@ async function resolvePiperCallback(): Promise<Response> {
       return new Response(`[piper-gate] Integrity Violation: The fetched 'piper-callback.js' does not match the expected SHA-256 hash.`, { status: 403 });
     }
 
-    console.log(`[piper-gate] Sovereign Callback verified successfully.`);
-    return new Response(data, {
-      status: 200,
-      headers: { 'Content-Type': 'text/javascript', 'x-piper-sw': 'verified' },
-    });
+    // 3. Persist and return
+    await writeToOpfs(OPFS_INFRA_DIR, filename, data);
+    console.log(`[piper-gate] Callback verified and cached successfully.`);
+    return createVerifiedResponse(data, { filename });
   } catch (err: unknown) {
-    console.error(`[piper-gate] Sovereign Callback fetch failed:`, err);
+    console.error(`[piper-gate] Callback fetch failed:`, err);
     return new Response(`[piper-gate] Internal Server Error: Failed to resolve callback.`, { status: 500 });
   }
 }
@@ -415,12 +417,12 @@ async function resolvePiperCallback(): Promise<Response> {
  * Resolves voice assets (ONNX models and configs).
  * SHA-256 lookup: hardcoded registry → HF API for custom URLs.
  */
-async function resolveVoiceAsset(filename: string, mimeType: string, request: Request): Promise<Response> {
+async function resolveVoiceAsset(filename: string, request: Request): Promise<Response> {
   // Parse filename: "modelId.onnx" or "modelId.onnx.json"
   const isConfig = filename.endsWith('.onnx.json');
   const modelId = isConfig ? filename.slice(0, -10) : filename.slice(0, -5);
   const extension = isConfig ? 'config' : 'onnx';
-  const isCacheDownload = request.headers.get('x-piper-cache-download') === 'true';
+  const downloadForCacheOnly = request.headers.get('x-piper-cache-download') === 'true';
 
   // 1. Get expected SHA-256
   let expectedSha256: string | null = null;
@@ -465,10 +467,7 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
     const isValid = await verifySha256(cached, expectedSha256);
     if (isValid) {
       console.log(`[piper-gate] [Cache Hit] Voice asset verified from OPFS: ${filename}`);
-      return new Response(cached, {
-        status: 200,
-        headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
-      });
+      return createVerifiedResponse(cached, { filename });
     } else {
       console.log(`[piper-gate] [Stale Cache] Voice integrity mismatch for '${filename}'. Purging stale entry.`);
       await deleteFromOpfs(OPFS_VOICES_DIR, filename);
@@ -587,20 +586,14 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
     console.log(`[piper-gate] [Cache Restored] Voice asset '${filename}' downloaded and verified.`);
 
     // MEMORY FIX: If requester only wanted to trigger cache, return 204 No Content
-    if (isCacheDownload) {
-      return new Response(null, { 
-        status: 204,
-        headers: {
-          'x-piper-sw': 'verified',
-          'x-piper-sha256': expectedSha256
-        }
+    if (downloadForCacheOnly) {
+      return createVerifiedResponse(null, { 
+        status: 204, 
+        extraHeaders: { 'x-piper-sha256': expectedSha256 } 
       });
     }
-
-    return new Response(data, {
-      status: 200,
-      headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
-    });
+    
+    return createVerifiedResponse(data, { filename });
   } catch (err: unknown) {
     if (err instanceof Error && err.name === 'AbortError') {
       return new Response(`[piper-gate] Download aborted: ${filename}`, { status: 499 });
@@ -753,7 +746,30 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
 // Utilities
 // ---------------------------------------------------------------------------
 
-function resolveMimeType(filename: string): string {
-  const ext = filename.substring(filename.lastIndexOf('.'));
-  return MIME_REGISTRY[ext] ?? 'application/octet-stream';
+/**
+ * Factory for creating verified responses.
+ * Enforces Cross-Origin Isolation (CORP) and library-specific integrity headers.
+ */
+function createVerifiedResponse(
+  body: BodyInit | null, 
+  options: { 
+    filename?: string;
+    status?: number; 
+    extraHeaders?: Record<string, string>; 
+  } = {}
+): Response {
+  const { filename, status = 200, extraHeaders = {} } = options;
+  
+  const headers: Record<string, string> = {
+    'x-piper-sw': 'verified',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    ...extraHeaders
+  };
+  
+  if (filename) {
+    const ext = filename.substring(filename.lastIndexOf('.'));
+    headers['Content-Type'] = MIME_REGISTRY[ext] ?? 'application/octet-stream';
+  }
+
+  return new Response(body, { status, headers });
 }
