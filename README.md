@@ -65,7 +65,7 @@ Copy WASM binaries and the Service Worker to your public folder:
 npx piper-farm init
 ```
 
-This CLI command detects your framework (SvelteKit, Vite, Next.js, etc.) and copies assets to the appropriate static directory (e.g., `public/` or `static/`).
+This CLI command detects your framework (SvelteKit, Vite, Next.js, etc.) and copies assets to the appropriate static directory (e.g., `public/` or `static/`). You can optionally specify a custom root: `npx piper-farm init dist/client`.
 
 ### Step 2: Initialize the Provider
 
@@ -191,9 +191,9 @@ provider.onQueueStatus((status) => console.log(status.state));
 
 ## CLI: Asset Provisioning
 
-### `npx piper-farm init [target-path]`
+### `npx piper-farm init [static-root]`
 
-Provisions the following assets to your static directory:
+Provisions the Sovereign Gateway assets. The Service Worker is placed in the `[static-root]`, and all infrastructure binaries are placed in `[static-root]/piper-gate/infra/`.
 
 | File | Purpose |
 | :--- | :--- |

@@ -32,7 +32,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:vitals": "vitest run .test/vitals.test.ts"
+    "test:vitals": "vitest run .test/vitals.test.ts",
+    "test:provision": "npm run build && rm -rf tmp-test-provision && mkdir tmp-test-provision && cd tmp-test-provision && touch package.json && node ../dist/cli.js init && node ../dist/cli.js init custom-target && cd .."
   },
   "dependencies": {
     "@huggingface/hub": "^2.11.0"

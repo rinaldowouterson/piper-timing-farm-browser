@@ -4,6 +4,7 @@ tmp
 public/assets
 public/wasm
 src/worker/assets
+tmp-test-provision
 
 # Output
 .output

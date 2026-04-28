@@ -57,7 +57,7 @@ const INFRA_SHA256_REGISTRY: Record<string, string> = {
   'piper_phonemize.data':        '29f1025eb23a5b5c192cd14a6efbce4509402ff265405072ee6f7d1a09b78f8c',
   'piper_phonemize.js':          'fef0c2fc442d24fdef5c7c7cc37d5da2314407640fe11ab1bfe347c723dff19b',
   'piper_phonemize.wasm':        'b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6',
-  'process-piper-synthesis.worker.js': '9cb8b5e5c9c32cb6de1efe3a49ad815ee689365ae43517a3750e9c7210e1f6fe',
+  'process-piper-synthesis.worker.js': '9bbf4214abbc3c24724e3ba012e0f3d416bd7e35d3ac9f96c0f87f3108c7821b',
   'piper-callback.js':           '', // User-provided; integrity must be set by the consumer at runtime.
 };
 
