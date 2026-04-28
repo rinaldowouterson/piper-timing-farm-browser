@@ -173,7 +173,18 @@ await provider.synthesize(text: string, options?: SynthesizeOptions);
 await provider.clearPiperModelCache(); // Wipes voices
 await provider.clearPiperInfraCache(); // Wipes WASM/Engine
 await provider.deletePiperModel(id);   // Wipes specific voice
+await provider.cancelDownload(id);     // Aborts active download
 provider.terminate();
+
+// Observability & Diagnostics
+const id = provider.getActiveModelId();
+const state = provider.getDownloadState(); // Map<id, DownloadState>
+const initialized = provider.isInitialized();
+const { queueLength, busyWorkers } = provider.metrics;
+
+// Event Listeners
+provider.onLog((log) => console.log(log.message));
+provider.onQueueStatus((status) => console.log(status.state));
 ```
 
 ---
@@ -194,7 +205,9 @@ Provisions the following assets to your static directory:
 | `piper_phonemize.wasm` | Phonemization Engine |
 | `process-piper-synthesis.worker.js` | The Synthesis Worker |
 | `piper_phonemize.data` | Language data (~17MB) |
-| `piper-callback.js` | User-provided post-processing script |
+
+> [!NOTE]
+> `piper-callback.js` is a user-provided sidecar and is **not** provisioned by the CLI. You must create this file in your root if `useCallback: true` is enabled.
 
 ---
 
@@ -203,9 +216,9 @@ Provisions the following assets to your static directory:
 ### Verbose Lifecycle Logging
 
 The Service Worker provides detailed logs to help you track asset resolution:
-- `[Cache Hit]`: Asset verified and served from OPFS.
-- `[Stale Cache]`: Detected an integrity mismatch (e.g., from an older build). The entry is deleted and re-fetched.
-- `[Cache Restored]`: Asset successfully re-downloaded, verified, and saved to OPFS.
+- `[piper-gate] [Cache Hit]`: Asset verified and served from OPFS.
+- `[piper-gate] [Stale Cache]`: Detected an integrity mismatch (e.g., from an older build). The entry is deleted and re-fetched.
+- `[piper-gate] [Cache Restored]`: Asset successfully re-downloaded, verified, and saved to OPFS.
 
 ### Path Deviation Diagnostics
 
