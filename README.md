@@ -1,15 +1,15 @@
-# Piper Timing Farm
+# Piper Timing Farm Browser
 
 A multi-threaded Text-to-Speech engine for browser applications, providing phoneme-level timing data through patched Piper models.
 
-[![Release](https://img.shields.io/npm/v/piper-timing-farm)](https://www.npmjs.com/package/piper-timing-farm)
-[![License](https://img.shields.io/npm/l/piper-timing-farm)](https://github.com/rinaldo/piper-timing-farm/blob/main/LICENSE)
+[![Release](https://img.shields.io/npm/v/piper-timing-farm-browser)](https://www.npmjs.com/package/piper-timing-farm-browser)
+[![License](https://img.shields.io/npm/l/piper-timing-farm-browser)](https://github.com/rinaldo/piper-timing-farm-browser/blob/main/LICENSE)
 
 ---
 
 ## Overview
 
-`piper-timing-farm` is a TypeScript library for browser-based Text-to-Speech synthesis. It extends the Piper TTS system with the following capabilities:
+`piper-timing-farm-browser` is a TypeScript library for browser-based Text-to-Speech synthesis. It extends the Piper TTS system with the following capabilities:
 
 - **Multi-threaded processing**: Synthesis operations execute in Web Workers, isolating computation from the main thread.
 - **Order-preserving parallel execution**: Multiple synthesis requests process concurrently while results return in strict request order (FIFO sequencing).
@@ -29,7 +29,7 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
   - [Asset Delivery & OPFS Storage](#asset-delivery--opfs-storage)
 - [Core Features](#core-features)
   - [Parallel FIFO Sequencer](#parallel-fifo-sequencer)
-  - [Seamless Model Switching](#seamless-model-switching)
+  - [Background Model Switching](#background-model-switching)
   - [Download Controller](#download-controller)
   - [Worker Callbacks](#worker-callbacks)
 - [Security Architecture](#security-architecture)
@@ -48,7 +48,7 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 ## Installation
 
 ```bash
-npm install piper-timing-farm
+npm install piper-timing-farm-browser
 ```
 
 The `onnxruntime-web` peer dependency documents the ONNX Runtime version used internally. WASM binaries are bundled in the build output and provisioned via `npx piper-farm init`.
@@ -70,7 +70,7 @@ This CLI command detects your framework (SvelteKit, Vite, Next.js, etc.) and cop
 ### Step 2: Initialize the Provider
 
 ```typescript
-import { createPiperProvider } from "piper-timing-farm";
+import { createPiperProvider } from "piper-timing-farm-browser";
 
 const provider = createPiperProvider();
 
@@ -119,7 +119,7 @@ The cache can be managed independently:
 
 When multiple synthesis requests arrive simultaneously, workers process them in parallel. To guarantee determinism, results are internally buffered and returned exactly in request order (FIFO), even if a later short request finishes before an earlier long request.
 
-### Seamless Model Switching
+### Background Model Switching
 
 Calling `provider.init({ modelId: 'new-model' })` triggers a background download without blocking active processing. The queue continues serving the current model while the new model downloads, verifies, and initializes. Once ready, the worker pool reference is replaced and incoming requests route to the new model.
 
@@ -151,7 +151,7 @@ export function onSynthesisComplete(result) {
 | Voice models | HF OID / Registry | SW mandatory check on every read |
 | Worker Scripts | `INFRA_SHA256_REGISTRY` | SW mandatory check on every read |
 
-### Broadcast Error Architecture
+### Error Propagation
 
 The Service Worker does not fail silently. All integrity mismatches, download failures, or path deviations are broadcast via the `piper-download-progress` `BroadcastChannel`. The library automatically listens to this channel to propagate errors to your `synthesize()` calls.
 
@@ -187,10 +187,14 @@ Provisions the following assets to your static directory:
 | File | Purpose |
 | :--- | :--- |
 | `control-asset-sw.js` | Service Worker gateway (placed at root) |
-| `ort-wasm-simd-threaded.wasm` | ONNX Runtime Engine |
+| `ort-wasm-simd-threaded.wasm` | ONNX Runtime Engine (SIMD/Multi-thread) |
+| `ort-wasm-simd-threaded.mjs` | ONNX Runtime Loader |
+| `ort.wasm.min.mjs` | ONNX Runtime entry point |
+| `piper_phonemize.js` | Phonemization Loader |
 | `piper_phonemize.wasm` | Phonemization Engine |
 | `process-piper-synthesis.worker.js` | The Synthesis Worker |
 | `piper_phonemize.data` | Language data (~17MB) |
+| `piper-callback.js` | User-provided post-processing script |
 
 ---
 

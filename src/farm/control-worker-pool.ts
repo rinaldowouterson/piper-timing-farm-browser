@@ -198,7 +198,7 @@ export function createWorkerPool(
           await Promise.all(loadPromises);
           currentConfig = newConfig;
           return;
-        } catch (err) {
+        } catch (err: unknown) {
           onLog({
             level: 'warn',
             message: `[WorkerPool] Path A (Surgical) failed or timed out: ${err instanceof Error ? err.message : String(err)}. Falling back to Path B (Full Hotswap).`,

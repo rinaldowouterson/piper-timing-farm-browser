@@ -285,7 +285,7 @@ async function resolveAsset(assetPath: string, request: Request): Promise<Respon
   } else {
     return new Response(`[piper-gate] Unknown directory: ${directory}`, { status: 400 });
   }
-  } catch (err) {
+  } catch (err: unknown) {
     // Generalized Error Gateway: Report EVERYTHING that fails in the SW
     broadcastError(assetPath, err);
     
@@ -368,7 +368,7 @@ async function resolveInfraAsset(filename: string, mimeType: string): Promise<Re
       status: 200,
       headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
     });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error(`[piper-gate] CDN fetch failed for ${filename}:`, err);
     return new Response(`[piper-gate] CDN unreachable for: ${filename}`, { status: 502 });
   }
@@ -405,7 +405,7 @@ async function resolvePiperCallback(): Promise<Response> {
       status: 200,
       headers: { 'Content-Type': 'text/javascript', 'x-piper-sw': 'verified' },
     });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error(`[piper-gate] Sovereign Callback fetch failed:`, err);
     return new Response(`[piper-gate] Internal Server Error: Failed to resolve callback.`, { status: 500 });
   }
@@ -601,7 +601,7 @@ async function resolveVoiceAsset(filename: string, mimeType: string, request: Re
       status: 200,
       headers: { 'Content-Type': mimeType, 'x-piper-sw': 'verified' },
     });
-  } catch (err) {
+  } catch (err: unknown) {
     if (err instanceof Error && err.name === 'AbortError') {
       return new Response(`[piper-gate] Download aborted: ${filename}`, { status: 499 });
     }
@@ -674,7 +674,7 @@ async function writeToOpfs(directory: string, filename: string, data: ArrayBuffe
     const writable = await handle.createWritable();
     await writable.write(data);
     await writable.close();
-  } catch (err) {
+  } catch (err: unknown) {
     console.warn(`[piper-gate] OPFS write failed for ${directory}/${filename}:`, err);
   }
 }
@@ -702,7 +702,7 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
       try {
         await root.removeEntry('voices', { recursive: true });
         console.log('[piper-gate] Voice cache cleared (recursive)');
-      } catch (err) {
+      } catch (err: unknown) {
         const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
         if (!isNotFound) throw err;
       }
@@ -714,7 +714,7 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
       try {
         await root.removeEntry('infra', { recursive: true });
         console.log('[piper-gate] Infra asset cache cleared (recursive)');
-      } catch (err) {
+      } catch (err: unknown) {
         const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
         if (!isNotFound) throw err;
       }
@@ -732,7 +732,7 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
         for (const ext of ['.onnx', '.onnx.json']) {
           try {
             await voicesDir.removeEntry(`${modelId}${ext}`);
-          } catch (err) {
+          } catch (err: unknown) {
             const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
             if (!isNotFound) throw err;
           }
@@ -743,7 +743,7 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
     }
 
     return new Response(`[piper-gate] Unsupported deletion path: ${assetPath}`, { status: 400 });
-  } catch (err) {
+  } catch (err: unknown) {
     console.error(`[piper-gate] Deletion failed for ${assetPath}:`, err);
     return new Response(`[piper-gate] Internal OPFS Error`, { status: 500 });
   }

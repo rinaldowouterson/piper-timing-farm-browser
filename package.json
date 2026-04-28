@@ -15,8 +15,8 @@
       "types": "./dist/index.d.ts"
     },
     "./worker": {
-      "import": "./dist/worker.js",
-      "types": "./dist/worker.d.ts"
+      "import": "./dist/process-piper-synthesis.worker.js",
+      "types": "./dist/process-piper-synthesis.worker.d.ts"
     }
   },
   "files": [

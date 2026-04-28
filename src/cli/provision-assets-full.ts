@@ -53,7 +53,7 @@ async function provision() {
       console.log(`  [OK] Created sidecar: ${path.basename(absPath)}.json`);
       console.log(`  [OK] Timestamp: ${new Date(sidecar.generatedAt).toISOString()}\n`);
       process.exit(0);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('\nHashing failed:', err);
       process.exit(1);
     }
@@ -126,10 +126,10 @@ function copyFiles(sourceDir: string, absTargetDir: string, relativeDisplayPath:
   console.log('Next steps:');
   console.log(`1. Ensure your server serves /piper-gate/ directory`);
   console.log('2. Service Worker registered at /control-asset-sw.js (scope: /)');
-  console.log('3. Use the library: import { ... } from "piper-timing-farm"\n');
+  console.log('3. Use the library: import { ... } from "piper-timing-farm-browser"\n');
 }
 
-provision().catch(err => {
+provision().catch((err: unknown) => {
   console.error('\nProvisioning failed:', err);
   process.exit(1);
 });

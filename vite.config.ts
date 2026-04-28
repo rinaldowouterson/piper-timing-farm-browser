@@ -128,7 +128,7 @@ export default defineConfig({
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === 'cli') return 'cli.js';
           if (chunkInfo.name === 'index') return 'index.js';
-          if (chunkInfo.name === 'worker') return 'worker.js';
+          if (chunkInfo.name === 'worker') return 'process-piper-synthesis.worker.js';
           if (chunkInfo.name === 'control-asset-sw') return 'control-asset-sw.js';
           return '[name].js';
         },
