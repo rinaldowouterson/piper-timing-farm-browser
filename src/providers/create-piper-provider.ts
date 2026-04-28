@@ -128,6 +128,10 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       return farm.synthesize(text, options);
     },
 
+    updatePendingOptions(options) {
+      farm?.updatePendingOptions(options);
+    },
+
     cancelSynthesis(requestId: string) {
       farm?.cancelSynthesis(requestId);
     },

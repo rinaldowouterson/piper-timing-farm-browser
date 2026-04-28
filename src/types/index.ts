@@ -183,6 +183,11 @@ export interface PiperWorkerFarm {
   isInitialized(): boolean;
   getActiveModelId(): string | null;
   prepareTransition(targetModelId: string): void;
+  /** 
+   * Updates parameters for all requests currently waiting in the queue.
+   * This does NOT affect requests already dispatched to workers.
+   */
+  updatePendingOptions(options: Partial<SynthesizeOptions>): void;
 	readonly metrics: {
 		queueLength: number;
 		busyWorkers: number;

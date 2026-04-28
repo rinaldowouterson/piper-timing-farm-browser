@@ -272,10 +272,6 @@ async function resolveAsset(assetPath: string, request: Request): Promise<Respon
 
   const [directory, filename] = pathParts;
 
-  // 0. User-provided callback handling
-  if (assetPath === 'piper-callback.js' || filename === 'piper-callback.js') {
-    return await resolvePiperCallback();
-  }
 
   if (directory === 'infra') {
     return await resolveInfraAsset(filename);
@@ -368,50 +364,6 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
  * Resolves the user-provided callback script.
  * Enforces strict SHA-256 verification against the INFRA_SHA256_REGISTRY.
  */
-async function resolvePiperCallback(): Promise<Response> {
-  const filename = 'piper-callback.js';
-  const expectedSha256 = INFRA_SHA256_REGISTRY[filename];
-  
-  if (!expectedSha256) {
-    return new Response(`[piper-gate] Integrity Hash Missing: The 'piper-callback.js' hash must be explicitly set in the INFRA_SHA256_REGISTRY.`, { status: 404 });
-  }
-
-  // 1. Check OPFS cache
-  const cached = await readFromOpfs(OPFS_INFRA_DIR, filename);
-  if (cached) {
-    const isValid = await verifySha256(cached, expectedSha256);
-    if (isValid) {
-      console.log(`[piper-gate] [Cache Hit] Callback verified from OPFS.`);
-      return createVerifiedResponse(cached, { filename });
-    } else {
-      await deleteFromOpfs(OPFS_INFRA_DIR, filename);
-    }
-  }
-
-  try {
-    // 2. Fetch from origin root
-    const localResponse = await fetch(`/piper-callback.js`);
-    if (!localResponse.ok) {
-      return new Response(`[piper-gate] File Missing: 'piper-callback.js' could not be found at the origin root.`, { status: 404 });
-    }
-
-    const data = await localResponse.arrayBuffer();
-    const isValid = await verifySha256(data, expectedSha256);
-    
-    if (!isValid) {
-      console.error(`[piper-gate] Integrity Violation: 'piper-callback.js' hash mismatch.`);
-      return new Response(`[piper-gate] Integrity Violation: The fetched 'piper-callback.js' does not match the expected SHA-256 hash.`, { status: 403 });
-    }
-
-    // 3. Persist and return
-    await writeToOpfs(OPFS_INFRA_DIR, filename, data);
-    console.log(`[piper-gate] Callback verified and cached successfully.`);
-    return createVerifiedResponse(data, { filename });
-  } catch (err: unknown) {
-    console.error(`[piper-gate] Callback fetch failed:`, err);
-    return new Response(`[piper-gate] Internal Server Error: Failed to resolve callback.`, { status: 500 });
-  }
-}
 
 /**
  * Resolves voice assets (ONNX models and configs).

@@ -100,10 +100,9 @@ const audioCtx = new AudioContext();
 
 const buffer = audioCtx.createBuffer(1, result.audioData.length, result.sampleRate);
 
-// Performance Tip: Pass result.audioData directly for zero-allocation playback.
-// Note: Use 'new Float32Array(result.audioData)' when COOP/COEP headers are enabled.
-
-buffer.copyToChannel(result.audioData, 0);
+// Use 'new Float32Array(result.audioData)' to ensure compatibility if 
+// SharedArrayBuffer (COOP/COEP) is enabled.
+buffer.copyToChannel(new Float32Array(result.audioData), 0);
 
 const source = audioCtx.createBufferSource();
 source.buffer = buffer;
@@ -144,7 +143,21 @@ When multiple synthesis requests arrive simultaneously, workers process them in 
 
 ### Background Model Switching
 
-Calling `provider.init({ modelId: 'new-model' })` triggers a background download without blocking active processing. The queue continues serving the current model while the new model downloads, verifies, and initializes. Once ready, the worker pool reference is replaced and incoming requests route to the new model.
+Calling `provider.init({ modelId: 'new-model' })` triggers a background download without blocking active processing. The queue continues serving the current model while the new model downloads, verifies, and initializes. 
+
+Once ready, the worker pool performs an atomic hotswap. During this handover, the **Parallel FIFO Sequencer** automatically transforms the pending queue:
+1. **Speaker ID Validation**: Any `speakerId` in the queue that exceeds the new model's capacity is reset to `0`.
+2. **State Consistency**: Waiting requests are updated to ensure they are compatible with the new model before they are dispatched to workers.
+
+---
+
+### Synchronous Parameter Updates
+
+The farm supports updating parameters for requests already waiting in the queue without requiring a full model re-initialization or request cancellation.
+
+- **`updatePendingOptions(options: Partial<SynthesizeOptions>)`**: Updates `speed`, `volume`, or `speakerId` for all items in the main-thread buffer.
+- **Validation**: Manual updates to `speakerId` are validated against the active model's speaker manifest.
+- **Active Requests**: Requests already dispatched to workers are not affected to prevent state desync.
 
 ---
 
@@ -152,10 +165,12 @@ Calling `provider.init({ modelId: 'new-model' })` triggers a background download
 
 For post-synthesis processing (e.g., viseme mapping), the architecture supports a callback module that executes within the isolated worker thread.
 
-To enable, set `useCallback: true` during initialization. The worker will attempt to load a verified `/piper-callback.js` from your root.
+Enabling `useCallback: true` requires a verified `[root]/piper-gate/infra/piper-callback.js` module that exports a mandatory `onSynthesisComplete` function. 
+
+Use `npx piper-farm hash [root]/piper-gate/infra/piper-callback.js` to generate the integrity hash and use the output to update the `INFRA_SHA256_REGISTRY` in the Service Worker.
 
 ```javascript
-// /piper-callback.js
+// [ public | static ]/piper-gate/infra/piper-callback.js
 export function onSynthesisComplete(result) {
   // result.metadata.phonemes -> viseme logic
   return { visemes: [...] };
@@ -197,6 +212,7 @@ const provider = createPiperProvider();
 
 await provider.init(config: FarmConfig);
 await provider.synthesize(text: string, options?: SynthesizeOptions);
+await provider.updatePendingOptions(options: Partial<SynthesizeOptions>);
 await provider.clearPiperModelCache(); // Wipes voices
 await provider.clearPiperInfraCache(); // Wipes WASM/Engine
 await provider.deletePiperModel(id);   // Wipes specific voice
@@ -232,9 +248,6 @@ Provisions the Sovereign Gateway assets. The Service Worker is placed in the `[s
 | `piper_phonemize.wasm` | Phonemization Engine |
 | `process-piper-synthesis.worker.js` | The Synthesis Worker |
 | `piper_phonemize.data` | Language data (~17MB) |
-
-> [!NOTE]
-> `piper-callback.js` is a user-provided sidecar and is **not** provisioned by the CLI. You must create this file in your root if `useCallback: true` is enabled.
 
 ---
 

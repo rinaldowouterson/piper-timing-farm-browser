@@ -12,6 +12,8 @@ import type {
 } from "../types";
 import { createWorkerPool } from "./control-worker-pool";
 import { clearModelCache, clearInfraCache } from "../utils/resolve-cache-clearing";
+import { transformPendingQueue } from "../utils/process-queue-transform";
+import { PIPER_MODELS } from "../expose-piper-models";
 
 // ---------------------------------------------------------------------------
 // Default Asset Paths (Service Worker Gateway)
@@ -182,7 +184,31 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       if (config.piperPaths) workerConfig.piperPaths = config.piperPaths;
 
       await pool.reinit(workerConfig);
+
+      // 2. Handover Scrubbing (Double-Gated Validation)
+      // Ensure that all requests remaining in the queue are compatible with 
+      // the new model's speaker limits before they are dispatched.
+      const targetModelId = pool.getTargetModelId();
+      if (targetModelId) {
+        const modelEntry = PIPER_MODELS.find(m => m.id === targetModelId);
+        const numSpeakers = modelEntry?.numSpeakers ?? 1;
+
+        const pending = queue.filter(r => !activeRequests.has(r.requestId));
+        transformPendingQueue(pending, {}, { numSpeakers });
+      }
+
       processQueue();
+    },
+
+    updatePendingOptions(options) {
+      // Resolve constraints for the current active/target model
+      const targetModelId = pool.getTargetModelId();
+      const modelEntry = targetModelId ? PIPER_MODELS.find(m => m.id === targetModelId) : null;
+      const numSpeakers = modelEntry?.numSpeakers ?? 1;
+
+      // Apply transformation to the waiting buffer
+      const pending = queue.filter(r => !activeRequests.has(r.requestId));
+      transformPendingQueue(pending, options, { numSpeakers });
     },
 
     prepareTransition(targetModelId: string) {
