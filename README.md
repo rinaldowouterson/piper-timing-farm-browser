@@ -145,10 +145,14 @@ When multiple synthesis requests arrive simultaneously, workers process them in 
 
 Calling `provider.init({ modelId: 'new-model', cpuInstances: 4 })` triggers a background transition without blocking active processing. The pool size defaults to 2 worker instances if `cpuInstances` is not specified. The queue continues serving the current model while the new model or additional workers are provisioned.
 
-Once the new resources are ready, the worker pool performs an atomic swap. During this handover:
+The library selects a transition path based on the configuration delta:
+
+- **Resource Reuse (Lightweight Update)**: If `useCallback` and/or `defaultSpeakerId` changed, the existing worker pool is updated in-place. This prevents the memory peak of a redundant pool while the workers load the new callback logic and/or the new speaker id.
+- **Atomic Swap (Parallel Transition)**: If `modelId` and/or `cpuInstances` changed, a new pool is provisioned in the background. Once ready, the worker pool performs a reference swap. During this handover:
+
 1. **Queue Transformation**: Any `speakerId` in the queue that exceeds the new model's capacity is reset to `0`.
 2. **State Consistency**: Waiting requests are updated for compatibility with the new model before dispatch.
-3. **Graceful Retirement**: Old workers finish their active synthesis task before termination, preventing audio gaps or failed requests during resizing or model changes.
+3. **Graceful Retirement**: Old workers finish their active synthesis task before termination, preventing audio gaps or failed requests.
 
 ---
 
