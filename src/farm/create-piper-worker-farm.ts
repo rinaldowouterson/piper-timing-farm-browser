@@ -183,7 +183,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       if (config.onnxRuntimePaths) workerConfig.onnxRuntimePaths = config.onnxRuntimePaths;
       if (config.piperPaths) workerConfig.piperPaths = config.piperPaths;
 
-      await pool.reinit(workerConfig);
+      await pool.reinit(workerConfig, config.cpuInstances);
 
       // 2. Handover Scrubbing (Double-Gated Validation)
       // Ensure that all requests remaining in the queue are compatible with 

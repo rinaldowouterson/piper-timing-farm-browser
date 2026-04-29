@@ -71,11 +71,17 @@ export function createWorkerPool(
     async init(config: PiperWorkerConfig, count: number) {
       if (activeInit) return activeInit;
 
+      // If already initialized, delegate to reinit for any state changes (config or count)
+      // to ensure a clean atomic transition (Shadow Pool) instead of leaking workers.
+      if (isInitialized && currentConfig) {
+        if (!isConfigSame(currentConfig, config) || workers.length !== count) {
+          return this.reinit(config, count);
+        }
+        return;
+      }
+
       activeInit = (async () => {
         try {
-          if (isInitialized && currentConfig && isConfigSame(currentConfig, config) && workers.length === count) {
-            return;
-          }
 
           currentConfig = config;
           activeModelId = config.modelId;
@@ -90,14 +96,22 @@ export function createWorkerPool(
               if (msg.type === 'ready') onReady(msg.instanceId);
               else onResult(msg);
             }, onLog, pendingCallbackLoads);
+            
+            // Mark as transitioning to prevent getNextAvailable from picking it up
+            // until the WASM module is fully ready.
+            worker.transitioning = true;
             workers.push(worker);
+
             initPromises.push(new Promise<void>((res, rej) => {
               const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
                 const msg = e.data;
                 if (msg.type === 'log') return;
                 if (msg.instanceId !== id) return;
                 
-                if (msg.type === 'ready') cleanup(res);
+                if (msg.type === 'ready') {
+                  worker.transitioning = false;
+                  cleanup(res);
+                }
                 else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
               };
               const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
@@ -130,14 +144,14 @@ export function createWorkerPool(
      *
      * @throws {DOMException} AbortError if this transition is superseded by a newer one.
      */
-    async reinit(config: Partial<PiperWorkerConfig>) {
+    async reinit(config: Partial<PiperWorkerConfig>, count?: number) {
       if (!currentConfig) throw new Error("Pool not initialized");
       
       const normalizedPartial = removeUndefined(config);
       const newConfig = { ...currentConfig, ...normalizedPartial } as PiperWorkerConfig;
 
-      // 1. Idempotency Check: Skip if requested config is identical to current
-      if (isConfigSame(currentConfig, newConfig)) {
+      // 1. Idempotency Check: Skip if requested config and count are identical to current
+      if (isConfigSame(currentConfig, newConfig) && (count === undefined || workers.length === count)) {
         targetModelId = newConfig.modelId; // Ensure target is synced
         targetSpeakerId = newConfig.defaultSpeakerId || 0;
         onLog({
@@ -214,15 +228,15 @@ export function createWorkerPool(
         }
       }
 
-      // 4. Path B: Full Hotswap (Shadow Pool) for core asset changes or Path A recovery
+      // 4. Path B: Full Hotswap (Shadow Pool) for core asset changes, resizing, or Path A recovery
       onLog({
         level: 'info',
-        message: `[WorkerPool] Choosing Path B (Hotswap): Configuration mismatch detected. Spawning shadow pool...`,
+        message: `[WorkerPool] Choosing Path B (Hotswap): Configuration or size mismatch detected. Spawning shadow pool...`,
         workerId: -1,
         timestamp: Date.now()
       });
       targetModelId = newConfig.modelId;
-      const count = workers.length;
+      const finalCount = count ?? workers.length;
       const shadowPool: WorkerState[] = [];
       const abortController = new AbortController();
 
@@ -234,7 +248,7 @@ export function createWorkerPool(
 
       // Spawn Shadow Pool
       const initPromises = [];
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < finalCount; i++) {
         if (abortController.signal.aborted) break;
         const id = nextWorkerId++;
         const worker = createWorker(id, newConfig, (msg) => {
@@ -431,5 +445,5 @@ function createWorker(
 
   worker.postMessage({ type: "init", config: workerConfig });
 
-  return { id, worker, busy: false, modelId: config.modelId };
+  return { id, worker, busy: false, transitioning: false, modelId: config.modelId };
 }

@@ -14,7 +14,7 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 - **Multi-threaded processing**: Synthesis operations execute in Web Workers, isolating computation from the main thread.
 - **Order-preserving parallel execution**: Multiple synthesis requests process concurrently while results return in strict request order (FIFO sequencing).
 - **Phoneme duration metadata**: Patched Piper models expose per-phoneme timing data for synchronization applications (lipsync, captions).
-- **Service Worker Gateway**: A mandatory security layer that intercepts all asset requests to enforce SHA-256 integrity and OPFS caching.
+- **Service Worker Gateway**: A security layer that intercepts asset requests to enforce SHA-256 integrity and OPFS caching.
 - **OPFS-based asset caching**: Models and WASM binaries persist in the Origin Private File System for offline operation.
 - **SHA-256 integrity verification**: All binary assets undergo mandatory cryptographic verification on every read before execution.
 - **Cross-Origin Isolation Ready**: The Service Worker gateway implements mandatory `Cross-Origin-Resource-Policy` (CORP) headers, ensuring the engine functions in hardened security environments (`COOP`/`COEP`).
@@ -141,13 +141,14 @@ The cache can be managed independently:
 
 When multiple synthesis requests arrive simultaneously, workers process them in parallel. To guarantee determinism, results are internally buffered and returned exactly in request order (FIFO), even if a later short request finishes before an earlier long request.
 
-### Background Model Switching
+### Background Model Switching & Optional Pool Resizing
 
-Calling `provider.init({ modelId: 'new-model' })` triggers a background download without blocking active processing. The queue continues serving the current model while the new model downloads, verifies, and initializes. 
+Calling `provider.init({ modelId: 'new-model', cpuInstances: 4 })` triggers a background transition without blocking active processing. The pool size defaults to 2 worker instances if `cpuInstances` is not specified. The queue continues serving the current model while the new model or additional workers are provisioned.
 
-Once ready, the worker pool performs an atomic hotswap. During this handover, the **Parallel FIFO Sequencer** automatically transforms the pending queue:
-1. **Speaker ID Validation**: Any `speakerId` in the queue that exceeds the new model's capacity is reset to `0`.
-2. **State Consistency**: Waiting requests are updated to ensure they are compatible with the new model before they are dispatched to workers.
+Once the new resources are ready, the worker pool performs an atomic swap. During this handover:
+1. **Queue Transformation**: Any `speakerId` in the queue that exceeds the new model's capacity is reset to `0`.
+2. **State Consistency**: Waiting requests are updated for compatibility with the new model before dispatch.
+3. **Graceful Retirement**: Old workers finish their active synthesis task before termination, preventing audio gaps or failed requests during resizing or model changes.
 
 ---
 
@@ -236,7 +237,7 @@ provider.onQueueStatus((status) => console.log(status.state));
 
 ### `npx piper-farm init [static-root]`
 
-Provisions the Sovereign Gateway assets. The Service Worker is placed in the `[static-root]`, and all infrastructure binaries are placed in `[static-root]/piper-gate/infra/`.
+Provisions the gateway assets. The Service Worker is placed in the `[static-root]`, and all infrastructure binaries are placed in `[static-root]/piper-gate/infra/`.
 
 | File | Purpose |
 | :--- | :--- |
