@@ -156,8 +156,6 @@ export interface FarmConfig {
   onProgress?: (state: DownloadState) => void;
   /** Global default speaker ID for all workers in the farm. */
   defaultSpeakerId?: number;
-  /** Custom path to the asset-intercepting Service Worker (e.g. for subpath deployments). */
-  serviceWorkerUrl?: string;
 }
 
 export interface SynthesizeOptions {

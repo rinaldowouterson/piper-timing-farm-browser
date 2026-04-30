@@ -3,13 +3,13 @@ import { setupAssetSW } from "./setup-asset-sw";
 /**
  * Atomic, session-independent OPFS cache clearing.
  * 
- * Sovereign Gateway Architecture:
+ * Service Worker Gateway Architecture:
  * - Delegates all storage operations to the Service Worker via DELETE /piper-gate/voices/
  * - Uses setupAssetSW() as a guard to ensure the gateway is active.
  */
 export async function clearModelCache(): Promise<void> {
     try {
-        // Ensure Sovereign Gateway is active before dispatching deletion
+        // Ensure Service Worker Gateway is active before dispatching deletion
         await setupAssetSW().catch(() => {});
 
         const res = await fetch('/piper-gate/voices/', { method: 'DELETE' });
@@ -18,7 +18,7 @@ export async function clearModelCache(): Promise<void> {
             throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
         }
         
-        console.log('[PiperFarm] Voice cache cleared via Sovereign Gateway');
+        console.log('[PiperFarm] Voice cache cleared via Service Worker Gateway');
     } catch (err) {
         console.error('[PiperFarm] Voice cache clearing failed:', err);
         throw err;
@@ -27,7 +27,7 @@ export async function clearModelCache(): Promise<void> {
 
 /**
  * Clear the Piper infra asset cache (WASM, worker scripts).
- * Delegates to the Sovereign Gateway.
+ * Delegates to the Service Worker Gateway.
  */
 export async function clearInfraCache(): Promise<void> {
     try {
@@ -39,7 +39,7 @@ export async function clearInfraCache(): Promise<void> {
             throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
         }
 
-        console.log('[PiperFarm] Infra asset cache cleared via Sovereign Gateway');
+        console.log('[PiperFarm] Infra asset cache cleared via Service Worker Gateway');
     } catch (err) {
         console.error('[PiperFarm] Infra cache clearing failed:', err);
         throw err;
@@ -48,7 +48,7 @@ export async function clearInfraCache(): Promise<void> {
 
 /**
  * Delete a specific model's cached OPFS files.
- * Routes through the Sovereign Gateway for atomic cleanup.
+ * Routes through the Service Worker Gateway for atomic cleanup.
  */
 export async function deletePiperModel(modelId: string): Promise<void> {
     try {

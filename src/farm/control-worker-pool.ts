@@ -140,7 +140,7 @@ export function createWorkerPool(
     },
 
     /**
-     * Re-initializes the pool using a Shadow Pool pattern with Atomic Supersession.
+     * Re-initializes the pool using a Shadow Pool pattern with transition abort.
      *
      * If a previous transition is still in-flight (shadow pool initializing),
      * it is immediately aborted and its workers terminated to prevent

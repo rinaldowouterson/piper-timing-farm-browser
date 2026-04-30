@@ -1,9 +1,9 @@
 /**
  * Piper Timing Farm - Official ESM Entry Point
  * 
- * High-performance, multi-threaded Piper TTS for the browser.
+ * Multi-threaded Piper TTS for the browser.
  * Features Worker Farm parallelization, Worker-Thread callbacks, 
- * and stress-test-proof background model switching.
+ * and background model switching.
  */
 
 export { createPiperWorkerFarm } from './farm/create-piper-worker-farm';

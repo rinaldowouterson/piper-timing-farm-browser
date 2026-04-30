@@ -15,7 +15,7 @@ export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<Serv
     return Promise.reject(new Error('SW not supported'));
   }
 
-  // Fast-path: If the Sovereign Gateway is already active and controlling the page, 
+  // Fast-path: If the Service Worker Gateway is already active and controlling the page, 
   // return the existing registration immediately.
   if (navigator.serviceWorker.controller) {
     return navigator.serviceWorker.ready;
@@ -32,7 +32,7 @@ export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<Serv
   // CRITICAL: Ensure the SW is actually CONTROLLING the page.
   // This is required for intercepting the very first fetch after registration.
   if (!navigator.serviceWorker.controller) {
-    console.log('[setup-asset-sw] Waiting for Sovereign Gateway to take control...');
+    console.log('[setup-asset-sw] Waiting for Service Worker Gateway to take control...');
     await new Promise<void>((resolve, reject) => {
       const handler = () => {
         if (navigator.serviceWorker.controller) {
@@ -50,6 +50,6 @@ export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<Serv
     });
   }
 
-  console.log('[setup-asset-sw] Sovereign Gateway Service Worker active and controlling:', reg.scope);
+  console.log('[setup-asset-sw] Service Worker Gateway active and controlling:', reg.scope);
   return reg;
 }

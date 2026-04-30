@@ -13,15 +13,15 @@ import { clearModelCache, deletePiperModel, clearInfraCache } from "../utils/res
 import { setupAssetSW } from "../utils/setup-asset-sw";
 
 /**
- * High-level Piper Provider with stress-test-proof background model switching.
+ * Piper Provider with background model switching.
  * 
  * Logic:
  * 1. Tracks current active model.
  * 2. If a new model is requested during active synthesis, it downloads 
  *    and verifies it in the background while the current model continues 
  *    processing the queue.
- * 3. Once fully provisioned, it performs an atomic handoff (reinit).
- * 4. Speaker ID flows per-request without triggering infrastructure changes.
+ * 3. Once provisioned, it performs a re-initialization (reinit).
+ * 4. Speaker ID flows per-request without infrastructure changes.
  */
 export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & { 
   getActiveModelId: () => string | null;
@@ -43,7 +43,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   let farmLogUnsubscribe: (() => void) | null = null;
   
   // Early SW Registration: Mandatory in the browser. 
-  // If this fails, init() will throw a fatal error to protect integrity.
+  // If this fails, init() will throw an error.
   let swRegistrationPromise: Promise<ServiceWorkerRegistration | undefined> = Promise.resolve(undefined);
   if (typeof window !== 'undefined') {
     swRegistrationPromise = setupAssetSW();
@@ -68,7 +68,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 
       loadingModelId = modelId;
       
-      // 2. Download & Verify via the sovereign gateway (SW)
+      // 2. Download & Verify via the Service Worker gateway
       try {
         await downloader.request(
           modelId, 

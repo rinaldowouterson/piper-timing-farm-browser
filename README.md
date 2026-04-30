@@ -12,12 +12,12 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 `piper-timing-farm-browser` is a TypeScript library for browser-based Text-to-Speech synthesis. It extends the Piper TTS system with the following capabilities:
 
 - **Multi-threaded processing**: Synthesis operations execute in Web Workers, isolating computation from the main thread.
-- **Order-preserving parallel execution**: Multiple synthesis requests process concurrently while results return in strict request order (FIFO sequencing).
+- **Order-preserving parallel execution**: Concurrent synthesis requests return results in request order (FIFO sequencing).
 - **Phoneme duration metadata**: Patched Piper models expose per-phoneme timing data for synchronization applications (lipsync, captions).
 - **Service Worker Gateway**: A security layer that intercepts asset requests to enforce SHA-256 integrity and OPFS caching.
 - **OPFS-based asset caching**: Models and WASM binaries persist in the Origin Private File System for offline operation.
-- **SHA-256 integrity verification**: All binary assets undergo mandatory cryptographic verification on every read before execution.
-- **Cross-Origin Isolation Ready**: The Service Worker gateway implements mandatory `Cross-Origin-Resource-Policy` (CORP) headers, ensuring the engine functions in hardened security environments (`COOP`/`COEP`).
+- **SHA-256 integrity verification**: Binary assets undergo cryptographic verification before execution.
+- **Cross-Origin Isolation Ready**: The Service Worker gateway implements `Cross-Origin-Resource-Policy` (CORP) headers, ensuring the engine functions in hardened security environments (`COOP`/`COEP`).
 
 ---
 
@@ -119,9 +119,9 @@ source.start();
 ### Service Worker Gateway
 
 The library requires a Service Worker gateway (`control-asset-sw.js`) that intercepts all requests starting with `/piper-gate/`. This ensures:
-1. **Mandatory Verification**: No binary asset is executed unless its SHA-256 hash matches the registry.
+1. **Verification**: No binary asset is executed unless its SHA-256 hash matches the registry.
 2. **Offline Persistence**: Verified assets are saved to the Origin Private File System (OPFS).
-3. **Direct-to-Storage Streaming**: Large models (50MB+) are streamed directly to storage, preventing main-thread memory pressure.
+3. **Buffered Background Persistence**: All assets (WASM binaries and voice models) are buffered in memory for SHA-256 verification before being persisted to OPFS. While this occurs off the main thread, memory is consumed during the download and verification phase.
 
 ### Asset Delivery & OPFS Storage
 
@@ -131,7 +131,7 @@ The gateway manages two distinct storage directories:
 
 The cache can be managed independently:
 - `clearPiperModelCache()`: Purges all downloaded voices while keeping the engine binaries.
-- `clearPiperInfraCache()`: Purges core binaries (WASM/Workers) to force an engine update.
+- `clearPiperInfraCache()`: Purges core binaries (WASM/Workers).
 
 ---
 
@@ -147,7 +147,7 @@ Calling `provider.init({ modelId: 'new-model', cpuInstances: 4 })` triggers a ba
 
 The library selects a transition path based on the configuration delta:
 
-- **Resource Reuse (Lightweight Update)**: If `useCallback` and/or `defaultSpeakerId` changed, the existing worker pool is updated in-place. This prevents the memory peak of a redundant pool while the workers load the new callback logic and/or the new speaker id.
+- **Resource Reuse (Lightweight Update)**: If `useCallback` and/or `defaultSpeakerId` changed, the existing worker pool is updated in-place. This prevents the memory peak of a redundant pool.
 - **Atomic Swap (Parallel Transition)**: If `modelId` and/or `cpuInstances` changed, a new pool is provisioned in the background. Once ready, the worker pool performs a reference swap. During this handover:
 
 1. **Queue Transformation**: Any `speakerId` in the queue that exceeds the new model's capacity is reset to `0`.
@@ -183,7 +183,7 @@ For post-synthesis processing (e.g., viseme mapping), the architecture supports 
 
 Enabling `useCallback: true` requires a verified `[root]/piper-gate/infra/piper-callback.js` module that exports a mandatory `onSynthesisComplete` function. 
 
-Use `npx piper-farm hash [root]/piper-gate/infra/piper-callback.js` to generate the integrity hash and use the output to update the `INFRA_SHA256_REGISTRY` in the Service Worker.
+Use `npx piper-farm hash [root]/piper-gate/infra/piper-callback.js` to generate the integrity hash and update the `INFRA_SHA256_REGISTRY` in the Service Worker.
 
 ```javascript
 // [ public | static ]/piper-gate/infra/piper-callback.js
@@ -195,56 +195,99 @@ export function onSynthesisComplete(result) {
 
 ---
 
-## Security Architecture
-
-### Integrity Verification Pipeline
-
-| Asset Layer | Integrity Source | Verification Point |
-| :--- | :--- | :--- |
-| Engine binaries | Hardcoded hashes | SW mandatory check on every read |
-| Voice models | HF OID / Registry | SW mandatory check on every read |
-| Worker Scripts | `INFRA_SHA256_REGISTRY` | SW mandatory check on every read |
-
-### Error Propagation
-
-The Service Worker does not fail silently. All integrity mismatches, download failures, or path deviations are broadcast via the `piper-download-progress` `BroadcastChannel`. The library automatically listens to this channel to propagate errors to your `synthesize()` calls.
-
-### Cross-Origin Isolation (COOP/COEP)
-
-The library is fully compatible with "Cross-Origin Isolation." The Service Worker gateway automatically appends `Cross-Origin-Resource-Policy: same-origin` to all intercepted assets (`/piper-gate/*`). This ensures that browsers do not block WASM or worker scripts when the parent application implements hardened security headers (`COOP`/`COEP`).
-
-**Security Hardening**: There are **no bypass mechanisms** (e.g., `?bypass-sw=true`). If an asset fails verification, it is deleted from cache and must be re-downloaded from a trusted source.
-
----
-
 ## API Reference
 
 ### `createPiperProvider()`
 
 The recommended high-level API.
 
+#### `init(config: FarmConfig): Promise<void>`
+Initializes or re-initializes the farm.
+
+| Option | Type | Default | Purpose |
+| :--- | :--- | :--- | :--- |
+| `modelId` | `string` | — | Model ID to load. |
+| `cpuInstances` | `number` | `2` | Number of worker instances. |
+| `useCallback` | `boolean` | `false` | Enable worker sidecar callbacks. |
+| `defaultSpeakerId`| `number` | `0` | Global default speaker ID. |
+| `modelUrls` | `object` | — | Custom `{ onnx, config }` URLs. |
+| `onProgress` | `function`| — | Model download progress callback. |
+
+#### `synthesize(text: string, options?: SynthesizeOptions): Promise<AudioSynthesisResult>`
+Queues a synthesis request.
+
+| Option | Type | Default | Purpose |
+| :--- | :--- | :--- | :--- |
+| `requestId` | `string` | `UUID` | Custom tracking identifier. |
+| `speakerId` | `number` | `0` | Speaker ID for this request. |
+| `speed` | `number` | `1.0` | Duration multiplier. |
+| `volume` | `number` | `1.0` | Audio amplitude scaling. |
+| `signal` | `AbortSignal`| — | Standard abort pattern. |
+
+#### Request Lifecycle Management
+- `cancelSynthesis(requestId: string)`: Aborts a specific request. If active, the worker is replaced.
+- `cancelAllSynthesis()`: Aborts all pending and active requests.
+- `updatePendingOptions(options: Partial<SynthesizeOptions>)`: Updates parameters for queued requests.
+- `prepareTransition(targetModelId: string)`: Sets target model ID before `reinit()`.
+
+#### Cache & Instance Management
+- `clearPiperModelCache()`: Purges downloaded voices.
+- `clearPiperInfraCache()`: Purges WASM and Engine binaries.
+- `deletePiperModel(id: string)`: Purges a specific voice.
+- `terminate()`: Forcefully terminates all workers and cancels downloads.
+
+#### Observability & Events
+- `getActiveModelId()`: Returns the currently active model ID.
+- `getDownloadState()`: Returns a `Map<id, DownloadState>` of active downloads.
+- `onLog((log: WorkerLogPayload) => void)`: Subscribe to worker logs.
+- `onQueueStatus((status: RequestStatusPayload) => void)`: Subscribe to queue events.
+
+---
+
+## Type Definitions
+
+### `AudioSynthesisResult`
 ```typescript
-const provider = createPiperProvider();
-
-await provider.init(config: FarmConfig);
-await provider.synthesize(text: string, options?: SynthesizeOptions);
-await provider.updatePendingOptions(options: Partial<SynthesizeOptions>);
-await provider.clearPiperModelCache(); // Wipes voices
-await provider.clearPiperInfraCache(); // Wipes WASM/Engine
-await provider.deletePiperModel(id);   // Wipes specific voice
-await provider.cancelDownload(id);     // Aborts active download
-provider.terminate();
-
-// Observability & Diagnostics
-const id = provider.getActiveModelId();
-const state = provider.getDownloadState(); // Map<id, DownloadState>
-const initialized = provider.isInitialized();
-const { queueLength, busyWorkers } = provider.metrics;
-
-// Event Listeners
-provider.onLog((log) => console.log(log.message));
-provider.onQueueStatus((status) => console.log(status.state));
+{
+  audioData: Float32Array;
+  sampleRate: number;
+  durationMs: number;
+  metadata: {
+    phonemes: string[];
+    durations: Float32Array;
+    modelId: string;
+    speakerId: number;
+  };
+  callbackResult?: any;
+}
 ```
+
+### `RequestStatusPayload`
+```typescript
+{
+  requestId: string;
+  text: string;
+  state: 'queued' | 'processing' | 'completed' | 'cancelled' | 'error';
+  modelId?: string;
+  error?: string;
+}
+```
+
+---
+
+## Security Architecture
+
+### Integrity Verification Pipeline
+
+| Asset Layer | Integrity Source | Verification Point |
+| :--- | :--- | :--- |
+| Engine binaries | Hardcoded hashes | Service Worker mandatory check |
+| Voice models | HF OID / Registry | Service Worker mandatory check |
+| Worker Scripts | `INFRA_SHA256_REGISTRY`| Service Worker mandatory check |
+
+### Error Propagation
+
+The Service Worker broadcasts integrity mismatches, download failures, or path deviations via the `piper-download-progress` `BroadcastChannel`. The library propagates these errors to your `synthesize()` calls.
 
 ---
 
@@ -252,18 +295,7 @@ provider.onQueueStatus((status) => console.log(status.state));
 
 ### `npx piper-farm init [static-root]`
 
-Provisions the gateway assets. The Service Worker is placed in the `[static-root]`, and all infrastructure binaries are placed in `[static-root]/piper-gate/infra/`.
-
-| File | Purpose |
-| :--- | :--- |
-| `control-asset-sw.js` | Service Worker gateway (placed at root) |
-| `ort-wasm-simd-threaded.wasm` | ONNX Runtime Engine (SIMD/Multi-thread) |
-| `ort-wasm-simd-threaded.mjs` | ONNX Runtime Loader |
-| `ort.wasm.min.mjs` | ONNX Runtime entry point |
-| `piper_phonemize.js` | Phonemization Loader |
-| `piper_phonemize.wasm` | Phonemization Engine |
-| `process-piper-synthesis.worker.js` | The Synthesis Worker |
-| `piper_phonemize.data` | Language data (~17MB) |
+Provisions the gateway assets. The Service Worker is placed in the `[static-root]`, and infrastructure binaries in `[static-root]/piper-gate/infra/`.
 
 ---
 
