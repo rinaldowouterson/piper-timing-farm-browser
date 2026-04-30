@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPiperWorkerFarm } from '../../src/farm/create-piper-worker-farm';
 
-describe('Double-Tap Poison Pill Protocol', () => {
+describe('Task Failure and Retry Orchestration', () => {
     const baseConfig = {
         modelId: 'en_US-bryce-medium',
         instanceId: 0,

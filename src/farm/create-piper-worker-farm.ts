@@ -155,9 +155,13 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
             queue.splice(queue.indexOf(pending), 1);
           }
         }
+      } else {
+        // HANDSHAKE / LOG / READY: 
+        // Ensure the queue processor runs to pick up new workers or newly-synced workers (Surgical Path A).
+        processQueue();
       }
-      processQueue();
     }
+    processQueue();
   }
 
   function processQueue() {
