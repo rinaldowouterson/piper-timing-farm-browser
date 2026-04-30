@@ -98,6 +98,8 @@ vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
 
 // --- 2. Web Worker Mock ---
 class MockWorker {
+    static instances: MockWorker[] = [];
+    
     onmessage: ((e: any) => void) | null = null;
     onerror: ((e: any) => void) | null = null;
     instanceId: number = -1;
@@ -105,7 +107,9 @@ class MockWorker {
     configCounter: number = -1;
     private listeners: Record<string, Set<Function>> = {};
 
-    constructor(public url: string | URL, public options?: WorkerOptions) {}
+    constructor(public url: string | URL, public options?: WorkerOptions) {
+        MockWorker.instances.push(this);
+    }
 
     addEventListener(type: string, listener: Function) {
         if (!this.listeners[type]) this.listeners[type] = new Set();
@@ -126,10 +130,12 @@ class MockWorker {
         return true;
     }
 
-    // Callback module state (for testing worker-thread callbacks)
     private callbackLoaded = false;
+    private terminated = false;
 
     postMessage(msg: any) {
+        if (this.terminated) return;
+        
         if (msg.type === 'init') {
             this.instanceId = msg.config.instanceId;
             this.modelId = msg.config.modelId;
@@ -137,17 +143,16 @@ class MockWorker {
             // Track if sovereign callback was enabled
             this.callbackLoaded = !!msg.config.useCallback;
             // Always respond to init to avoid deadlocks
-            setTimeout(() => this.emit('message', { type: 'ready', instanceId: this.instanceId, configCounter: this.configCounter }), 10);
+            setTimeout(() => { if (!this.terminated) this.emit('message', { type: 'ready', instanceId: this.instanceId, configCounter: this.configCounter }) }, 10);
         }
         if (msg.type === 'load-callback') {
             // Handle explicit callback loading toggle
             this.callbackLoaded = !!msg.useCallback;
             this.configCounter = msg.configCounter;
             const resType = this.callbackLoaded ? 'callback-on' : 'callback-off';
-            setTimeout(() => this.emit('message', { type: resType, instanceId: this.instanceId, configCounter: this.configCounter }), 10);
+            setTimeout(() => { if (!this.terminated) this.emit('message', { type: resType, instanceId: this.instanceId, configCounter: this.configCounter }) }, 10);
         }
         if (msg.type === 'synthesize') {
-            // FIX: Correctly pass the instanceId so the orchestrator can free the worker
             // Include callbackResult if callback module was loaded
             const callbackResult = this.callbackLoaded ? {
                 phonemeCount: 5,
@@ -156,28 +161,33 @@ class MockWorker {
                 success: true
             } : undefined;
             
-            setTimeout(() => this.emit('message', { 
-                type: 'success', 
-                instanceId: this.instanceId,
-                requestId: msg.requestId, 
-                result: { 
-                    audioData: new Float32Array(100), 
-                    sampleRate: 22050, 
-                    durationMs: 1000,
-                    metadata: { 
-                        modelId: this.modelId, 
-                        speakerId: msg.speakerId ?? 0,
-                        requestId: msg.requestId,
-                        phonemes: ['h', 'e', 'l', 'l', 'o'],
-                        durations: new Float32Array([50, 100, 50, 50, 100])
-                    }
-                },
-                callbackResult
-            }), 20);
+            setTimeout(() => {
+                if (this.terminated) return;
+                this.emit('message', { 
+                    type: 'success', 
+                    instanceId: this.instanceId,
+                    requestId: msg.requestId, 
+                    result: { 
+                        audioData: new Float32Array(100), 
+                        sampleRate: 22050, 
+                        durationMs: 1000,
+                        metadata: { 
+                            modelId: this.modelId, 
+                            speakerId: msg.speakerId ?? 0,
+                            requestId: msg.requestId,
+                            phonemes: ['h', 'e', 'l', 'l', 'o'],
+                            durations: new Float32Array([50, 100, 50, 50, 100])
+                        }
+                    },
+                    callbackResult
+                });
+            }, 20);
         }
     }
 
-    terminate() {}
+    terminate() {
+        this.terminated = true;
+    }
 
     private emit(type: string, data: any) {
         const event = { data };
@@ -211,6 +221,7 @@ vi.mock('@huggingface/hub', () => ({
 // --- 6. Persistence Cleanup ---
 beforeEach(() => {
     mockOpfsFiles.clear();
+    MockWorker.instances.length = 0;
     vi.clearAllMocks();
 });
 

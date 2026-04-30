@@ -63,6 +63,8 @@ export interface PendingRequest {
 	result?: AudioSynthesisResult & { callbackResult?: any };
   /** The model ID that was active when this request was processed. */
   modelId?: string;
+  /** Tracks the number of times this specific request caused a worker crash. */
+  crashCount?: number;
 }
 
 /**

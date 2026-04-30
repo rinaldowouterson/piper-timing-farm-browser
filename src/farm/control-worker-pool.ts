@@ -63,6 +63,13 @@ export function createWorkerPool(
   let pendingTransition: { abort: () => void; shadowPool: WorkerState[] } | null = null;
   let activeInit: Promise<void> | null = null;
 
+  const removeWorker = (id: number) => {
+    const index = workers.findIndex(w => w.id === id);
+    if (index !== -1) {
+      workers.splice(index, 1);
+    }
+  };
+
   return {
     async init(config: PiperWorkerConfig, count: number) {
       if (activeInit) return activeInit;
@@ -92,7 +99,7 @@ export function createWorkerPool(
             const worker = createWorker(id, config, poolTargetCounter, (msg) => {
               if (msg.type === 'ready') onReady(msg.instanceId);
               else onResult(msg);
-            }, onLog);
+            }, onLog, removeWorker);
             
             // Mark as transitioning to prevent getNextAvailable from picking it up
             // until the WASM module is fully ready.
@@ -223,7 +230,7 @@ export function createWorkerPool(
         const worker = createWorker(id, newConfig, poolTargetCounter, (msg) => {
           if (msg.type === 'ready') onReady(msg.instanceId);
           else onResult(msg);
-        }, onLog);
+        }, onLog, removeWorker);
         shadowPool.push(worker);
         initPromises.push(new Promise<void>((res, rej) => {
           const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
@@ -235,20 +242,31 @@ export function createWorkerPool(
             else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
           };
           const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
+          const abortHandler = () => cleanup(() => rej(new DOMException("Transition superseded by newer request", "AbortError")));
 
           const cleanup = (cb: () => void) => {
             worker.worker.removeEventListener('message', handler);
             worker.worker.removeEventListener('error', errHandler);
+            abortController.signal.removeEventListener('abort', abortHandler);
             cb();
           };
 
           worker.worker.addEventListener('message', handler);
           worker.worker.addEventListener('error', errHandler);
+          abortController.signal.addEventListener('abort', abortHandler);
         }));
       }
 
       // Wait for Shadow Pool to be READY
-      await Promise.all(initPromises);
+      try {
+        await Promise.all(initPromises);
+      } catch (e: any) {
+        if (e.name === 'AbortError') {
+          // Expected rejection when superseded
+        } else {
+          throw e;
+        }
+      }
 
       // Check if this transition was superseded by a newer reinit() call
       if (abortController.signal.aborted) {
@@ -310,7 +328,7 @@ export function createWorkerPool(
         } else {
           onResult(msg);
         }
-      }, onLog);
+      }, onLog, removeWorker);
       replacement.transitioning = true;
 
       // 4. Swap into the same array position to maintain pool size
@@ -344,7 +362,13 @@ export function createWorkerPool(
     setTargetSpeakerId: (id: number) => { targetSpeakerId = id; },
     getWorkerCount: () => workers.length,
     getBusyCount: () => workers.filter(w => w.busy).length,
-    getWorkers: () => workers
+    getWorkers: () => workers,
+
+    /**
+     * Physically removes a worker from the pool.
+     * Used when a worker crashes to ensure the farm shrinks deterministically.
+     */
+    removeWorker
   };
 }
 
@@ -353,7 +377,8 @@ function createWorker(
   config: PiperWorkerConfig, 
   targetCounter: number,
   onMessage: (msg: PiperWorkerMessageOut) => void,
-  onLog: (log: WorkerLogPayload) => void
+  onLog: (log: WorkerLogPayload) => void,
+  onCrash: (id: number) => void
 ): WorkerState {
   // Use Vite-safe worker instantiation if possible, otherwise use new URL
   const worker = new Worker('/piper-gate/infra/process-piper-synthesis.worker.js', {
@@ -384,6 +409,11 @@ function createWorker(
       errorMessage = "Worker failed to initialize or load (possible MIME mismatch or Network Error)";
     }
     console.error(`[WorkerPool] [Worker Error] Instance ${id}: ${errorMessage}`, e);
+    
+    // Physically terminate and remove before notifying the orchestrator
+    worker.terminate();
+    onCrash(id);
+    
     onMessage({ type: "error", instanceId: id, error: errorMessage });
   };
 

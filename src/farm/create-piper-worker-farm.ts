@@ -96,21 +96,64 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     } else if (msg.type === 'error') {
       const { instanceId, error, originalRequest } = msg;
       console.error(`Worker ${instanceId} error:`, error);
+      
+      // Determine if this was a physical crash (worker already purged by pool) or logical error
       const worker = pool.getWorkers().find(w => w.id === instanceId);
+      const isPhysicalCrash = !worker;
+
       if (worker) worker.busy = false;
-      if (originalRequest && originalRequest.type === 'synthesize') {
-        const pending = queue.find(r => r.requestId === originalRequest.requestId);
+
+      // Map physical crash back to the active request it was processing
+      let activeRequestId: string | undefined;
+      for (const [reqId, wId] of activeRequests.entries()) {
+        if (wId === instanceId) {
+          activeRequestId = reqId;
+          break;
+        }
+      }
+
+      const requestId = (originalRequest && originalRequest.type === 'synthesize') 
+        ? originalRequest.requestId 
+        : activeRequestId;
+
+      if (requestId) {
+        const pending = queue.find(r => r.requestId === requestId);
+
         if (pending) {
-          activeRequests.delete(originalRequest.requestId);
-          emit({ 
-            requestId: pending.requestId, 
-            text: pending.text, 
-            state: 'error', 
-            modelId: pool.getActiveModelId() || undefined,
-            error: error 
-          });
-          pending.reject(new Error(error));
-          queue.splice(queue.indexOf(pending), 1);
+          activeRequests.delete(requestId);
+
+          if (isPhysicalCrash) {
+            // DOUBLE-TAP PROTOCOL:
+            // If a worker crashes, we retry the task once on a different worker.
+            // If it crashes again, we assume it is a "Poison Pill" and reject the task.
+            pending.crashCount = (pending.crashCount || 0) + 1;
+
+            if (pending.crashCount >= 2) {
+              emit({ 
+                requestId: pending.requestId, 
+                text: pending.text, 
+                state: 'error', 
+                modelId: pool.getActiveModelId() || undefined,
+                error: `Fatal Crash (Double-Tap): ${error}` 
+              });
+              pending.reject(new Error(`Fatal Crash (Double-Tap): ${error}`));
+              queue.splice(queue.indexOf(pending), 1);
+            } else {
+              console.warn(`[Farm] Worker ${instanceId} crashed during task ${requestId}. Retrying on next available worker (Strike 1).`);
+              // Note: We don't splice from queue, so processQueue() will pick it up again
+            }
+          } else {
+            // LOGICAL ERROR: Worker is still alive. Reject the task immediately.
+            emit({ 
+              requestId: pending.requestId, 
+              text: pending.text, 
+              state: 'error', 
+              modelId: pool.getActiveModelId() || undefined,
+              error: error 
+            });
+            pending.reject(new Error(error));
+            queue.splice(queue.indexOf(pending), 1);
+          }
         }
       }
       processQueue();
@@ -121,7 +164,9 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     // 1. Resolve completed FIFO requests
     while (queue.length > 0 && queue[0].result) {
       const first = queue.shift()!;
-      first.resolve(first.result as any);
+      if (first.result) {
+        first.resolve(first.result);
+      }
     }
 
     // 2. Sample current pool state
@@ -134,6 +179,20 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       !activeRequests.has(r.requestId) && 
       (!isTransitioning || r.modelId === activeModel)
     );
+
+    if (nextRequest && pool.getWorkerCount() === 0) {
+      // FARM EXHAUSTION: All workers have crashed.
+      emit({ 
+        requestId: nextRequest.requestId, 
+        text: nextRequest.text, 
+        state: 'error', 
+        modelId: pool.getActiveModelId() || undefined,
+        error: "Farm Exhausted: All workers terminated due to fatal crashes." 
+      });
+      nextRequest.reject(new Error("Farm Exhausted"));
+      queue.splice(queue.indexOf(nextRequest), 1);
+      return;
+    }
 
     const worker = pool.getNextAvailable();
     if (nextRequest && worker) {
