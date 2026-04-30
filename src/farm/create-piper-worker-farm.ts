@@ -6,8 +6,6 @@ import type {
   PiperWorkerMessageOut,
   RequestStatusPayload,
   WorkerLogPayload,
-  OnnxRuntimePaths,
-  PiperPaths,
   PiperWorkerConfig
 } from "../types";
 import { createWorkerPool } from "./control-worker-pool";
@@ -16,28 +14,8 @@ import { transformPendingQueue } from "../utils/process-queue-transform";
 import { PIPER_MODELS } from "../expose-piper-models";
 
 // ---------------------------------------------------------------------------
-// Default Asset Paths (Service Worker Gateway)
+// Piper Worker Farm Orchestrator
 // ---------------------------------------------------------------------------
-
-/**
- * Default ONNX Runtime asset paths via /piper-gate/infra/
- * Service Worker handles SHA-256 verification automatically.
- */
-const ONNX_ASSET_URLS: OnnxRuntimePaths = {
-  wasm: '/piper-gate/infra/',
-  mjs: '/piper-gate/infra/ort.wasm.min.mjs',
-  mjsHelper: '/piper-gate/infra/ort-wasm-simd-threaded.mjs',
-};
-
-/**
- * Default Piper phonemizer asset paths via /piper-gate/infra/
- * Service Worker handles SHA-256 verification automatically.
- */
-const PIPER_ASSET_URLS: PiperPaths = {
-  piperData: '/piper-gate/infra/piper_phonemize.data',
-  piperJs:   '/piper-gate/infra/piper_phonemize.js',
-  piperWasm: '/piper-gate/infra/piper_phonemize.wasm',
-};
 
 // ---------------------------------------------------------------------------
 // Worker Farm Implementation
@@ -221,8 +199,6 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
     async init(config: FarmConfig) {
       const piperConfig: PiperWorkerConfig = {
         modelId: config.modelId,
-        onnxRuntimePaths: ONNX_ASSET_URLS,
-        piperPaths: PIPER_ASSET_URLS,
         useCallback: config.useCallback,
         defaultSpeakerId: config.defaultSpeakerId
       };

@@ -28,17 +28,13 @@ function removeUndefined<T extends object>(obj: T): T {
 function isConfigSame(a: PiperWorkerConfig, b: PiperWorkerConfig): boolean {
   return a.modelId === b.modelId && 
          a.defaultSpeakerId === b.defaultSpeakerId &&
-         JSON.stringify(a.onnxRuntimePaths) === JSON.stringify(b.onnxRuntimePaths) &&
-         JSON.stringify(a.piperPaths) === JSON.stringify(b.piperPaths) &&
          a.useCallback === b.useCallback;
 }
 
 function isSurgicalCandidate(oldConfig: PiperWorkerConfig, newConfig: PiperWorkerConfig): boolean {
   // Candidate for surgical update if ONLY useCallback or defaultSpeakerId changed
   // (Both are lightweight worker-side state updates)
-  const isCoreSame = oldConfig.modelId === newConfig.modelId &&
-                     JSON.stringify(oldConfig.onnxRuntimePaths) === JSON.stringify(newConfig.onnxRuntimePaths) &&
-                     JSON.stringify(oldConfig.piperPaths) === JSON.stringify(newConfig.piperPaths);
+  const isCoreSame = oldConfig.modelId === newConfig.modelId;
   
   if (!isCoreSame) return false;
 
@@ -422,8 +418,6 @@ function createWorker(
   // SCRUB CONFIG: Ensure no functions (like onProgress) are sent to worker (DataCloneError)
   const workerConfig = {
     modelId: config.modelId,
-    onnxRuntimePaths: config.onnxRuntimePaths,
-    piperPaths: config.piperPaths,
     instanceId: id,
     useCallback: config.useCallback,
     defaultSpeakerId: config.defaultSpeakerId

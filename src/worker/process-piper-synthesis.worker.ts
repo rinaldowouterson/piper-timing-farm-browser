@@ -96,9 +96,24 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Default Asset Paths (Service Worker Gateway)
+// ---------------------------------------------------------------------------
+
+const ONNX_ASSET_URLS = {
+  wasm: '/piper-gate/infra/',
+  mjs: '/piper-gate/infra/ort.wasm.min.mjs',
+};
+
+const PIPER_ASSET_URLS = {
+  piperData: '/piper-gate/infra/piper_phonemize.data',
+  piperJs:   '/piper-gate/infra/piper_phonemize.js',
+  piperWasm: '/piper-gate/infra/piper_phonemize.wasm',
+};
+
 // --- Initialization ---
 export async function setupPiperWorker(config: PiperWorkerConfig) {
-  const { modelId, onnxRuntimePaths, piperPaths, instanceId: id, useCallback, defaultSpeakerId: defaultSid } = config;
+  const { modelId, instanceId: id, useCallback, defaultSpeakerId: defaultSid } = config;
   instanceId = id || 0;
   currentModelId = modelId;
   defaultSpeakerId = defaultSid || 0;
@@ -124,19 +139,19 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     // 2. Configure ORT
     // Service Worker handles SHA-256 verification for all /piper-gate/* requests.
     // We simply fetch and import — SW guarantees integrity.
-    const ortRes = await fetch(onnxRuntimePaths.mjs);
+    const ortRes = await fetch(ONNX_ASSET_URLS.mjs);
     if (!ortRes.ok) throw new Error(`Failed to fetch ORT glue: ${ortRes.statusText}`);
     const ortCode = await ortRes.text();
 
     // Dynamic import — browser cache serves the verified content from SW
-    const ortModule = await import(/* @vite-ignore */ onnxRuntimePaths.mjs);
+    const ortModule = await import(/* @vite-ignore */ ONNX_ASSET_URLS.mjs);
     ortInstance = ortModule.default || ortModule;
     
     if (!ortInstance || !ortInstance.env) {
       throw new Error("Invalid ONNX Runtime module: 'env' is missing. Check if the .mjs URL is correct.");
     }
 
-    ortInstance.env.wasm.wasmPaths = onnxRuntimePaths.wasm;
+    ortInstance.env.wasm.wasmPaths = ONNX_ASSET_URLS.wasm;
     ortInstance.env.wasm.numThreads = 1; // Enforce single thread per worker
     
     ortSession = await ortInstance.InferenceSession.create(modelBuffer, {
@@ -145,7 +160,7 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     });
 
     // 3. Load Phonemizer
-    await loadPhonemizerModule(piperPaths);
+    await loadPhonemizerModule(PIPER_ASSET_URLS);
 
     // 4. Load Callback if configured
     if (useCallback) {
@@ -284,7 +299,7 @@ export async function processPiperSynthesis(
 
 let lastPhonemizerOutput: PhonemizerOutput | null = null;
 
-async function loadPhonemizerModule(piperPaths: PiperWorkerConfig["piperPaths"]) {
+async function loadPhonemizerModule(piperPaths: { piperJs: string; piperWasm: string; piperData: string }) {
   // The phonemizer glue JS is served through /piper-gate/infra/
   // Service Worker handles SHA-256 verification automatically.
   const glueUrl = piperPaths.piperJs;

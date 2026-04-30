@@ -82,48 +82,10 @@ export interface WorkerState {
 }
 
 /**
- * Asset paths for ONNX Runtime.
- * SHA-256 hashes are optional — Service Worker handles verification.
- */
-export interface OnnxRuntimePaths {
-  wasm: string;
-  /** Optional SHA-256 integrity hash (SW handles verification by default) */
-  wasmSha256?: string;
-  
-  mjs: string;
-  /** Optional SHA-256 integrity hash (SW handles verification by default) */
-  mjsSha256?: string;
-  
-  mjsHelper: string;
-  /** Optional SHA-256 integrity hash (SW handles verification by default) */
-  mjsHelperSha256?: string;
-}
-
-/**
- * Asset paths for Piper specific WASM/Data.
- * SHA-256 hashes are optional — Service Worker handles verification.
- */
-export interface PiperPaths {
-  piperWasm: string;
-  /** Optional SHA-256 integrity hash (SW handles verification by default) */
-  piperWasmSha256?: string;
-
-  piperJs: string;
-  /** Optional SHA-256 integrity hash (SW handles verification by default) */
-  piperJsSha256?: string;
-
-  piperData: string;
-  /** Optional SHA-256 integrity hash (SW handles verification by default) */
-  piperDataSha256?: string;
-}
-
-/**
  * Internal worker configuration.
  */
 export interface PiperWorkerConfig {
 	modelId: string;
-	onnxRuntimePaths: OnnxRuntimePaths;
-	piperPaths: PiperPaths;
 	instanceId?: number;
   /** Optional boolean flag to enable loading of the 'piper-callback.js' worker sidecar. */
   useCallback?: boolean;
