@@ -139,7 +139,7 @@ The cache can be managed independently:
 
 ### Parallel FIFO Sequencer
 
-When multiple synthesis requests arrive simultaneously, workers process them in parallel. To guarantee determinism, results are internally buffered and returned exactly in request order (FIFO), even if a later short request finishes before an earlier long request.
+Synthesis requests are processed in parallel. Results are buffered and returned in request order (FIFO). This ensures request sequence is preserved regardless of individual task processing duration.
 
 ### Background Model Switching & Optional Pool Resizing
 
@@ -163,6 +163,17 @@ The farm supports updating parameters for requests already waiting in the queue 
 - **`updatePendingOptions(options: Partial<SynthesizeOptions>)`**: Updates `speed`, `volume`, or `speakerId` for all items in the main-thread buffer.
 - **Validation**: Manual updates to `speakerId` are validated against the active model's speaker manifest.
 - **Active Requests**: Requests already dispatched to workers are not affected to prevent state desync.
+
+---
+
+### Failure Orchestration
+
+The farm implements a failure management strategy to isolate and recover from hardware-level worker crashes (e.g., WASM traps or memory exhaustion).
+
+- **Automatic Task Retry**: If a worker terminates during a synthesis task, the task is re-queued once for execution on a fresh worker instance.
+- **Recursive Failure Prevention**: If the same task causes a second worker termination, it is rejected with a `Worker Termination (Retry Exhausted)` error. This prevents recursive crash loops.
+- **Pool Exhaustion Safety**: If the worker pool is reduced to zero due to consecutive fatal errors, all pending and new requests are rejected with a `Farm Exhausted` error.
+- **Shadow Pool Abort Safety**: Superseded model transitions (rapid re-initialization) include cleanup. Aborted shadow workers are terminated, and associated promises reject with a `DOMException (AbortError)`.
 
 ---
 

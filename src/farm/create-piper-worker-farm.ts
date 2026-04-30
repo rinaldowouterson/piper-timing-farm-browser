@@ -123,9 +123,9 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
           activeRequests.delete(requestId);
 
           if (isPhysicalCrash) {
-            // DOUBLE-TAP PROTOCOL:
-            // If a worker crashes, we retry the task once on a different worker.
-            // If it crashes again, we assume it is a "Poison Pill" and reject the task.
+            // Task Retry Logic:
+            // If a worker crashes, the task is retried once on a different worker instance.
+            // If it crashes a second time, the task is rejected to prevent recursive failures.
             pending.crashCount = (pending.crashCount || 0) + 1;
 
             if (pending.crashCount >= 2) {
@@ -134,12 +134,12 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
                 text: pending.text, 
                 state: 'error', 
                 modelId: pool.getActiveModelId() || undefined,
-                error: `Fatal Crash (Double-Tap): ${error}` 
+                error: `Worker Termination (Retry Exhausted): ${error}` 
               });
-              pending.reject(new Error(`Fatal Crash (Double-Tap): ${error}`));
+              pending.reject(new Error(`Worker Termination (Retry Exhausted): ${error}`));
               queue.splice(queue.indexOf(pending), 1);
             } else {
-              console.warn(`[Farm] Worker ${instanceId} crashed during task ${requestId}. Retrying on next available worker (Strike 1).`);
+              console.warn(`[Farm] Worker ${instanceId} terminated during task ${requestId}. Retrying on next available worker.`);
               // Note: We don't splice from queue, so processQueue() will pick it up again
             }
           } else {

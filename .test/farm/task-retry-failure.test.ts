@@ -9,9 +9,9 @@ describe('Double-Tap Poison Pill Protocol', () => {
         piperPaths: { piperData: '', piperJs: '', piperWasm: '', piperJsSha256: '' }
     };
 
-    it('should retry a physical crash once (Strike 1)', async () => {
+    it('should retry a physical crash once', async () => {
         const farm = createPiperWorkerFarm();
-        await farm.init(baseConfig, 2);
+        await farm.init({ ...baseConfig, cpuInstances: 2 });
         
         // Start synthesis
         const promise = farm.synthesize('hello retry', { requestId: 'req-1' });
@@ -38,9 +38,9 @@ describe('Double-Tap Poison Pill Protocol', () => {
         farm.terminate();
     });
 
-    it('should reject a physical crash on the second time (Strike 2, Double-Tap Poison Pill)', async () => {
+    it('should reject a physical crash after retry exhaustion', async () => {
         const farm = createPiperWorkerFarm();
-        await farm.init(baseConfig, 2);
+        await farm.init({ ...baseConfig, cpuInstances: 2 });
         
         const promise = farm.synthesize('hello poison', { requestId: 'req-poison' });
         
@@ -57,7 +57,7 @@ describe('Double-Tap Poison Pill Protocol', () => {
         mockWorkers[1].dispatchEvent(new ErrorEvent('error', { message: 'Poison Pill Again' }));
         
         // The promise should reject with the Fatal Crash error
-        await expect(promise).rejects.toThrow('Fatal Crash (Double-Tap): Poison Pill Again');
+        await expect(promise).rejects.toThrow('Worker Termination (Retry Exhausted): Poison Pill Again');
         
         // Pool should be empty since both crashed
         expect(farm.metrics.totalWorkers).toBe(0);
