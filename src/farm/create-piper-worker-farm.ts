@@ -219,14 +219,10 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
 
   return {
     async init(config: FarmConfig) {
-      // Intelligent Architecture Defaults (Tier 3 FALLBACK)
-      const onnxRuntimePaths = config.onnxRuntimePaths || ONNX_ASSET_URLS;
-      const piperPaths = config.piperPaths || PIPER_ASSET_URLS;
-
-      const piperConfig = {
+      const piperConfig: PiperWorkerConfig = {
         modelId: config.modelId,
-        onnxRuntimePaths,
-        piperPaths,
+        onnxRuntimePaths: ONNX_ASSET_URLS,
+        piperPaths: PIPER_ASSET_URLS,
         useCallback: config.useCallback,
         defaultSpeakerId: config.defaultSpeakerId
       };
@@ -243,8 +239,6 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       if (config.modelId) workerConfig.modelId = config.modelId;
       if (config.useCallback !== undefined) workerConfig.useCallback = config.useCallback;
       if (config.defaultSpeakerId !== undefined) workerConfig.defaultSpeakerId = config.defaultSpeakerId;
-      if (config.onnxRuntimePaths) workerConfig.onnxRuntimePaths = config.onnxRuntimePaths;
-      if (config.piperPaths) workerConfig.piperPaths = config.piperPaths;
 
       await pool.reinit(workerConfig, config.cpuInstances);
 

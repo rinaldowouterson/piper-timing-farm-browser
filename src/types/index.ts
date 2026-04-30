@@ -143,8 +143,6 @@ export interface FarmConfig {
     onnx: string;
     config: string;
   };
-	onnxRuntimePaths?: OnnxRuntimePaths;
-	piperPaths?: PiperPaths;
   /** Total number of worker instances to use for parallel synthesis. Defaults to 2. */
 	cpuInstances?: number;
   /** Optional boolean flag to enable off-thread processing via the 'piper-callback.js' worker sidecar. */
