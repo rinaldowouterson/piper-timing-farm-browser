@@ -402,7 +402,7 @@ function createWorker(
     const msg = e.data;
     if (msg.type === 'log') {
       onLog(msg.payload);
-    } else if (msg.type === 'callback-loaded') {
+    } else if (msg.type === 'callback-on' || msg.type === 'callback-off') {
       const pending = pendingCallbackLoads.get(id);
       if (pending) {
         clearTimeout(pending.timeout);

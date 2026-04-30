@@ -214,7 +214,8 @@ export type PiperWorkerMessageOut =
 	| { type: "error"; instanceId: number; error: string; originalRequest?: PiperWorkerMessageIn }
   | { type: "log"; payload: WorkerLogPayload }
 	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: any }
-  | { type: "callback-loaded"; instanceId: number }
+  | { type: "callback-on"; instanceId: number }
+  | { type: "callback-off"; instanceId: number }
   | { type: "callback-failed"; instanceId: number; error: string };
 
 export interface PiperModelConfig {

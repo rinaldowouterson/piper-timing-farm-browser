@@ -164,6 +164,7 @@ export async function toggleCallback(enabled: boolean) {
       log("Callback disabled via surgical toggle");
       userCallback = null;
     }
+    postMessage({ type: "callback-off", instanceId });
     return;
   }
 
@@ -187,7 +188,7 @@ export async function toggleCallback(enabled: boolean) {
     }
     
     log("Sovereign callback loaded successfully");
-    postMessage({ type: "callback-loaded", instanceId });
+    postMessage({ type: "callback-on", instanceId });
   } catch (err) {
     userCallback = null; // Clear state on failure
     const errorVal = err instanceof Error ? err.message : String(err);
