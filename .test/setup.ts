@@ -102,6 +102,7 @@ class MockWorker {
     onerror: ((e: any) => void) | null = null;
     instanceId: number = -1;
     modelId: string = '';
+    configCounter: number = -1;
     private listeners: Record<string, Set<Function>> = {};
 
     constructor(public url: string | URL, public options?: WorkerOptions) {}
@@ -132,15 +133,18 @@ class MockWorker {
         if (msg.type === 'init') {
             this.instanceId = msg.config.instanceId;
             this.modelId = msg.config.modelId;
+            this.configCounter = msg.configCounter;
             // Track if sovereign callback was enabled
             this.callbackLoaded = !!msg.config.useCallback;
             // Always respond to init to avoid deadlocks
-            setTimeout(() => this.emit('message', { type: 'ready', instanceId: this.instanceId }), 10);
+            setTimeout(() => this.emit('message', { type: 'ready', instanceId: this.instanceId, configCounter: this.configCounter }), 10);
         }
         if (msg.type === 'load-callback') {
             // Handle explicit callback loading toggle
             this.callbackLoaded = !!msg.useCallback;
-            setTimeout(() => this.emit('message', { type: 'callback-loaded', instanceId: this.instanceId }), 10);
+            this.configCounter = msg.configCounter;
+            const resType = this.callbackLoaded ? 'callback-on' : 'callback-off';
+            setTimeout(() => this.emit('message', { type: resType, instanceId: this.instanceId, configCounter: this.configCounter }), 10);
         }
         if (msg.type === 'synthesize') {
             // FIX: Correctly pass the instanceId so the orchestrator can free the worker

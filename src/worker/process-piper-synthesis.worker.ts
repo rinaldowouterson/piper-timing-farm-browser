@@ -24,6 +24,7 @@ let instanceId = -1;
 let deviceLabel = "CPU";
 let currentModelId = "";
 let defaultSpeakerId = 0;
+let currentConfigCounter = -1;
 
 /** User-defined callback function loaded into the worker global scope. */
 let userCallback: ((result: AudioSynthesisResult) => unknown) | null = null;
@@ -68,9 +69,11 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
   try {
     switch (msg.type) {
       case "init":
+        currentConfigCounter = msg.configCounter;
         await setupPiperWorker(msg.config);
         break;
       case "load-callback":
+        currentConfigCounter = msg.configCounter;
         await toggleCallback(msg.useCallback);
         break;
       case "synthesize":
@@ -150,7 +153,7 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     }
 
     log("=== INIT COMPLETE ===");
-    postMessage({ type: "ready", instanceId });
+    postMessage({ type: "ready", instanceId, configCounter: currentConfigCounter });
   } catch (err) {
     const errorVal = err instanceof Error ? err : new Error(String(err));
     error("Init failed:", errorVal.message);
@@ -164,7 +167,7 @@ export async function toggleCallback(enabled: boolean) {
       log("Callback disabled via surgical toggle");
       userCallback = null;
     }
-    postMessage({ type: "callback-off", instanceId });
+    postMessage({ type: "callback-off", instanceId, configCounter: currentConfigCounter });
     return;
   }
 
@@ -188,7 +191,7 @@ export async function toggleCallback(enabled: boolean) {
     }
     
     log("Sovereign callback loaded successfully");
-    postMessage({ type: "callback-on", instanceId });
+    postMessage({ type: "callback-on", instanceId, configCounter: currentConfigCounter });
   } catch (err) {
     userCallback = null; // Clear state on failure
     const errorVal = err instanceof Error ? err.message : String(err);

@@ -54,6 +54,7 @@ export function createWorkerPool(
 ) {
   let workers: WorkerState[] = [];
   let nextWorkerId = 0;
+  let poolTargetCounter = 0;
   let isInitialized = false;
   let activeModelId: string | null = null;
   let targetModelId: string | null = null;
@@ -61,11 +62,6 @@ export function createWorkerPool(
   let currentConfig: PiperWorkerConfig | null = null;
   let pendingTransition: { abort: () => void; shadowPool: WorkerState[] } | null = null;
   let activeInit: Promise<void> | null = null;
-  const pendingCallbackLoads = new Map<number, { 
-    resolve: () => void; 
-    reject: (error: Error) => void;
-    timeout: ReturnType<typeof setTimeout>;
-  }>();
 
   return {
     async init(config: PiperWorkerConfig, count: number) {
@@ -88,14 +84,15 @@ export function createWorkerPool(
           targetModelId = config.modelId;
           targetSpeakerId = config.defaultSpeakerId || 0;
           isInitialized = true;
+          poolTargetCounter++;
 
           const initPromises = [];
           for (let i = 0; i < count; i++) {
             const id = nextWorkerId++;
-            const worker = createWorker(id, config, (msg) => {
+            const worker = createWorker(id, config, poolTargetCounter, (msg) => {
               if (msg.type === 'ready') onReady(msg.instanceId);
               else onResult(msg);
-            }, onLog, pendingCallbackLoads);
+            }, onLog);
             
             // Mark as transitioning to prevent getNextAvailable from picking it up
             // until the WASM module is fully ready.
@@ -186,46 +183,17 @@ export function createWorkerPool(
 
         
         
-        try {
-          const loadPromises = workers.map(w => {
-            return new Promise<void>((resolve, reject) => {
-              // 1. Setup pending confirmation entry with 5 second timeout
-              const timeout = setTimeout(() => {
-                const pending = pendingCallbackLoads.get(w.id);
-                if (pending) {
-                  pendingCallbackLoads.delete(w.id);
-                  reject(new Error(`Worker ${w.id} callback load timed out after 5s`));
-                }
-              }, 5000);
-
-              pendingCallbackLoads.set(w.id, { resolve, reject, timeout });
-
-              // 2. Dispatch surgical update
-              w.worker.postMessage({
-                type: "load-callback",
-                useCallback: newConfig.useCallback || false
-              });
-            });
+        poolTargetCounter++;
+        workers.forEach(w => {
+          w.targetCounter = poolTargetCounter;
+          w.worker.postMessage({
+            type: "load-callback",
+            useCallback: newConfig.useCallback || false,
+            configCounter: poolTargetCounter
           });
-
-          // Wait for all workers to confirm atomic success
-          await Promise.all(loadPromises);
-          currentConfig = newConfig;
-          return;
-        } catch (err: unknown) {
-          onLog({
-            level: 'warn',
-            message: `[WorkerPool] Path A (Surgical) failed or timed out: ${err instanceof Error ? err.message : String(err)}. Falling back to Path B (Full Hotswap).`,
-            workerId: -1,
-            timestamp: Date.now()
-          });
-          // CLEANUP: If we failed, make sure any remaining pending loads are cleared
-          pendingCallbackLoads.forEach((val, id) => {
-            clearTimeout(val.timeout);
-            pendingCallbackLoads.delete(id);
-          });
-          // Fall through to Path B
-        }
+        });
+        currentConfig = newConfig;
+        return;
       }
 
       // 4. Path B: Full Hotswap (Shadow Pool) for core asset changes, resizing, or Path A recovery
@@ -235,6 +203,7 @@ export function createWorkerPool(
         workerId: -1,
         timestamp: Date.now()
       });
+      poolTargetCounter++;
       targetModelId = newConfig.modelId;
       const finalCount = count ?? workers.length;
       const shadowPool: WorkerState[] = [];
@@ -251,10 +220,10 @@ export function createWorkerPool(
       for (let i = 0; i < finalCount; i++) {
         if (abortController.signal.aborted) break;
         const id = nextWorkerId++;
-        const worker = createWorker(id, newConfig, (msg) => {
+        const worker = createWorker(id, newConfig, poolTargetCounter, (msg) => {
           if (msg.type === 'ready') onReady(msg.instanceId);
           else onResult(msg);
-        }, onLog, pendingCallbackLoads);
+        }, onLog);
         shadowPool.push(worker);
         initPromises.push(new Promise<void>((res, rej) => {
           const handler = (e: MessageEvent<PiperWorkerMessageOut>) => {
@@ -333,7 +302,7 @@ export function createWorkerPool(
 
       // 2. Spawn a fresh replacement with a new unique ID
       const newId = nextWorkerId++;
-      const replacement = createWorker(newId, currentConfig, (msg) => {
+      const replacement = createWorker(newId, currentConfig, poolTargetCounter, (msg) => {
         if (msg.type === 'ready') {
           // 3. Clear transitioning flag when WASM is loaded and ready
           replacement.transitioning = false;
@@ -341,7 +310,7 @@ export function createWorkerPool(
         } else {
           onResult(msg);
         }
-      }, onLog, pendingCallbackLoads);
+      }, onLog);
       replacement.transitioning = true;
 
       // 4. Swap into the same array position to maintain pool size
@@ -349,10 +318,7 @@ export function createWorkerPool(
     },
 
     getNextAvailable(): WorkerState | null {
-      // Don't dispatch while callbacks are loading (Path A blocking)
-      if (pendingCallbackLoads.size > 0) return null;
-      
-      return workers.find(w => !w.busy && !w.transitioning) || null;
+      return workers.find(w => !w.busy && !w.transitioning && w.activeCounter === poolTargetCounter) || null;
     },
 
     terminate() {
@@ -364,8 +330,6 @@ export function createWorkerPool(
       }
       workers.forEach(w => w.worker.terminate());
       workers.length = 0;
-      pendingCallbackLoads.forEach(l => clearTimeout(l.timeout));
-      pendingCallbackLoads.clear();
       isInitialized = false;
       activeModelId = null;
       targetModelId = null;
@@ -387,9 +351,9 @@ export function createWorkerPool(
 function createWorker(
   id: number, 
   config: PiperWorkerConfig, 
+  targetCounter: number,
   onMessage: (msg: PiperWorkerMessageOut) => void,
-  onLog: (log: WorkerLogPayload) => void,
-  pendingCallbackLoads: Map<number, { resolve: () => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }>
+  onLog: (log: WorkerLogPayload) => void
 ): WorkerState {
   // Use Vite-safe worker instantiation if possible, otherwise use new URL
   const worker = new Worker('/piper-gate/infra/process-piper-synthesis.worker.js', {
@@ -398,24 +362,16 @@ function createWorker(
     name: `PiperWorker-${id}`
   });
 
+  const state: WorkerState = { id, worker, busy: false, transitioning: false, activeCounter: -1, targetCounter, modelId: config.modelId };
+
   worker.onmessage = (e: MessageEvent<PiperWorkerMessageOut>) => {
     const msg = e.data;
+    if ('configCounter' in msg) {
+      state.activeCounter = msg.configCounter;
+    }
+    
     if (msg.type === 'log') {
       onLog(msg.payload);
-    } else if (msg.type === 'callback-on' || msg.type === 'callback-off') {
-      const pending = pendingCallbackLoads.get(id);
-      if (pending) {
-        clearTimeout(pending.timeout);
-        pendingCallbackLoads.delete(id);
-        pending.resolve();
-      }
-    } else if (msg.type === 'callback-failed') {
-      const pending = pendingCallbackLoads.get(id);
-      if (pending) {
-        clearTimeout(pending.timeout);
-        pendingCallbackLoads.delete(id);
-        pending.reject(new Error(msg.error));
-      }
     } else {
       onMessage(msg);
     }
@@ -443,7 +399,7 @@ function createWorker(
     defaultSpeakerId: config.defaultSpeakerId
   };
 
-  worker.postMessage({ type: "init", config: workerConfig });
+  worker.postMessage({ type: "init", config: workerConfig, configCounter: targetCounter });
 
-  return { id, worker, busy: false, transitioning: false, modelId: config.modelId };
+  return state;
 }

@@ -73,6 +73,8 @@ export interface WorkerState {
 	worker: Worker;
 	busy: boolean;
   transitioning?: boolean;
+  activeCounter: number; // The configuration version currently achieved by this worker
+  targetCounter: number; // The configuration version this worker is instructed to reach
   /** The model ID currently active on this worker. */
   modelId?: string;
 }
@@ -198,8 +200,8 @@ export interface PiperWorkerFarm {
 }
 
 export type PiperWorkerMessageIn =
-	| { type: "init"; config: PiperWorkerConfig }
-  | { type: "load-callback"; useCallback: boolean }
+	| { type: "init"; config: PiperWorkerConfig; configCounter: number }
+  | { type: "load-callback"; useCallback: boolean; configCounter: number }
 	| {
 			type: "synthesize";
 			text: string;
@@ -210,12 +212,12 @@ export type PiperWorkerMessageIn =
 	  };
 
 export type PiperWorkerMessageOut =
-	| { type: "ready"; instanceId: number }
+	| { type: "ready"; instanceId: number; configCounter: number }
 	| { type: "error"; instanceId: number; error: string; originalRequest?: PiperWorkerMessageIn }
   | { type: "log"; payload: WorkerLogPayload }
 	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: any }
-  | { type: "callback-on"; instanceId: number }
-  | { type: "callback-off"; instanceId: number }
+  | { type: "callback-on"; instanceId: number; configCounter: number }
+  | { type: "callback-off"; instanceId: number; configCounter: number }
   | { type: "callback-failed"; instanceId: number; error: string };
 
 export interface PiperModelConfig {
