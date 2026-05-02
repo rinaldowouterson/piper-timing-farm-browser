@@ -4,11 +4,11 @@ import type {
   AudioSynthesisResult,
   DownloadState,
   RequestStatusPayload,
-  WorkerLogPayload
+  WorkerLogPayload,
+  PiperModelDefinition
 } from "../types";
 import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { createAssetDownloadController } from "../farm/control-asset-download";
-import { PIPER_MODELS } from "../expose-piper-models";
 import { clearModelCache, deletePiperModel, clearInfraCache } from "../utils/resolve-cache-clearing";
 import { setupAssetSW } from "../utils/setup-asset-sw";
 
@@ -59,8 +59,13 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
         await swRegistrationPromise;
       }
 
-      // 1. Ensure asset integrity and cache in OPFS
-      const modelEntry = PIPER_MODELS.find(m => m.id === modelId);
+      // 1. Resolve model metadata from the model cards via the Service Worker
+      const modelCardsResponse = await fetch('/piper-gate/infra/piper-model-cards.json');
+      if (!modelCardsResponse.ok) {
+        throw new Error(`Model cards fetch failed: ${modelCardsResponse.status}`);
+      }
+      const models: PiperModelDefinition[] = await modelCardsResponse.json();
+      const modelEntry = models.find(m => m.id === modelId);
       const onnxUrl = modelUrls?.onnx || modelEntry?.modelUrl;
       const jsonUrl = modelUrls?.config || modelEntry?.configUrl;
 
@@ -128,8 +133,8 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       return farm.synthesize(text, options);
     },
 
-    updatePendingOptions(options) {
-      farm?.updatePendingOptions(options);
+    async updatePendingOptions(options) {
+      await farm?.updatePendingOptions(options);
     },
 
     cancelSynthesis(requestId: string) {
@@ -187,7 +192,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       await downloader.cancel(modelId);
     },
 
-    /** Delete a specific model's cached OPFS files via the Sovereign Gateway. */
+    /** Delete a specific model's cached OPFS files via the Service Worker. */
     deletePiperModel,
 
     /** Returns a snapshot of every model's download lifecycle. */

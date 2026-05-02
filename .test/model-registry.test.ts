@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { PIPER_MODELS } from '../src/expose-piper-models';
+import type { PiperModelDefinition } from '../src/types';
+import modelsJson from '../src/piper-model-cards.json';
 
-describe('PIPER_MODELS Registry Integrity', () => {
+const PIPER_MODELS: PiperModelDefinition[] = modelsJson as PiperModelDefinition[];
+
+describe('piper-model-cards.json Registry Integrity', () => {
     it('should have at least one model registered', () => {
         expect(PIPER_MODELS.length).toBeGreaterThan(0);
     });

@@ -11,7 +11,22 @@ import type {
 import { createWorkerPool } from "./control-worker-pool";
 import { clearModelCache, clearInfraCache } from "../utils/resolve-cache-clearing";
 import { transformPendingQueue } from "../utils/process-queue-transform";
-import { PIPER_MODELS } from "../expose-piper-models";
+import type { PiperModelDefinition } from "../types";
+
+/**
+ * Resolves numSpeakers for a model ID from the model cards.
+ * Falls back to 1 if the model cards are unreachable or the model is not found.
+ */
+async function resolveNumSpeakers(modelId: string): Promise<number> {
+  try {
+    const response = await fetch('/piper-gate/infra/piper-model-cards.json');
+    if (!response.ok) return 1;
+    const models: PiperModelDefinition[] = await response.json();
+    return models.find(m => m.id === modelId)?.numSpeakers ?? 1;
+  } catch {
+    return 1;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Piper Worker Farm Orchestrator
@@ -22,7 +37,7 @@ import { PIPER_MODELS } from "../expose-piper-models";
 // ---------------------------------------------------------------------------
 
 /**
- * Creates the high-performance Piper worker farm.
+ * Creates the Piper worker farm.
  * 
  * Logic:
  * 1. Tracks multiple workers and distributes synthesis requests.
@@ -223,8 +238,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       // the new model's speaker limits before they are dispatched.
       const targetModelId = pool.getTargetModelId();
       if (targetModelId) {
-        const modelEntry = PIPER_MODELS.find(m => m.id === targetModelId);
-        const numSpeakers = modelEntry?.numSpeakers ?? 1;
+        const numSpeakers = await resolveNumSpeakers(targetModelId);
 
         const pending = queue.filter(r => !activeRequests.has(r.requestId));
         transformPendingQueue(pending, {}, { numSpeakers });
@@ -233,11 +247,13 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       processQueue();
     },
 
-    updatePendingOptions(options) {
+    async updatePendingOptions(options) {
       // Resolve constraints for the current active/target model
       const targetModelId = pool.getTargetModelId();
-      const modelEntry = targetModelId ? PIPER_MODELS.find(m => m.id === targetModelId) : null;
-      const numSpeakers = modelEntry?.numSpeakers ?? 1;
+      let numSpeakers = 1;
+      if (targetModelId) {
+        numSpeakers = await resolveNumSpeakers(targetModelId);
+      }
 
       // Apply transformation to the waiting buffer
       const pending = queue.filter(r => !activeRequests.has(r.requestId));

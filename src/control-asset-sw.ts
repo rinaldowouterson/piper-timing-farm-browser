@@ -49,6 +49,16 @@ async function verifySha256(buffer: ArrayBuffer, expected: string): Promise<bool
 const OPFS_INFRA_DIR = 'infra';
 const OPFS_VOICES_DIR = 'voices';
 
+/**
+ * Single hardcoded hash — the only trust anchor in the Service Worker.
+ * All voice model integrity is derived from the verified model cards.
+ * Updated automatically by: scripts/inject-model-cards-hash.ts
+ */
+
+const PIPER_MODEL_CARDS_SHA256 = '270aa371f9f528df0363f012b8d878267bf41531ff0a6008fb26e552dceec654';
+const PROCESS_PIPER_SYNTHESIS_WORKER_SHA256 = '64c3748cd696f83d73e16a1e191c9a45ce1c483cbce97742a68fc7631ab97a2e';
+const PIPER_CALLBACK_SHA256 = ''; // User-provided; integrity must be set by the consumer at runtime.
+
 /** Infra asset SHA-256 hashes (ORT WASM, Piper phonemize) — hardcoded for security */
 const INFRA_SHA256_REGISTRY: Record<string, string> = {
   'ort-wasm-simd-threaded.wasm': 'be0e129949062ad50290ef94683fac8be5bb6156f709e030b7a5f1661a2f6c17',
@@ -57,8 +67,9 @@ const INFRA_SHA256_REGISTRY: Record<string, string> = {
   'piper_phonemize.data':        '29f1025eb23a5b5c192cd14a6efbce4509402ff265405072ee6f7d1a09b78f8c',
   'piper_phonemize.js':          'fef0c2fc442d24fdef5c7c7cc37d5da2314407640fe11ab1bfe347c723dff19b',
   'piper_phonemize.wasm':        'b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6',
-  'process-piper-synthesis.worker.js': '3003b45c74ab87062f444182c401acbbb5109272c93a003cdfe045c5a66d8cc4',
-  'piper-callback.js':           '', // User-provided; integrity must be set by the consumer at runtime.
+  'process-piper-synthesis.worker.js': PROCESS_PIPER_SYNTHESIS_WORKER_SHA256,
+  'piper-model-cards.json':     PIPER_MODEL_CARDS_SHA256,
+  'piper-callback.js':           PIPER_CALLBACK_SHA256,
 };
 
 /** CDN fallback URLs for infra assets */
@@ -71,101 +82,65 @@ const INFRA_CDN_REGISTRY: Record<string, string> = {
   'piper_phonemize.wasm':        'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm',
 };
 
-/** Default voice model SHA-256 hashes — hardcoded from PIPER_MODELS registry */
-const VOICE_SHA256_REGISTRY: Record<string, { onnx?: string; config?: string }> = {
-  'en_US-bryce-medium': {
-    onnx: '330c232c12b8a08eb241599190f2ee8ccd6072dce323d10e06684fb0cde8a241',
-    config: '7ceb1bc4af6d4e41b6d1edbb86c67e91e01eaa71f66db4cd0ae92ac704d415be',
-  },
-  'en_US-ljspeech-high': {
-    onnx: '16e472d4e0b95134c67ebbc7fcb06c92b242adf3ea41f4f2630aaf172349227c',
-    config: '7e1f4634af596d83cca997fb7a931ba80b70f8a316a2655ee69c55365e0ace14',
-  },
-  'en_US-kristin-medium': {
-    onnx: 'f6f2c0e13b186ca0ceae53c4bf0e0dcd4533a8af496c3ee851272275538fb874',
-    config: '5681426d4aead22195de70531eeeeddb46493cfaffc5764b2ea3db73428b651c',
-  },
-  'en_US-arctic-medium': {
-    onnx: '87057d77bee2a3104a65655adf2d7a1c70ab93b50c8d37c690dbf5660391e4ff',
-    config: 'db2ca1a55db01cdd3ce28ae63037ac525133e9e00ca557430dec572643235efe',
-  },
-  'en_GB-cori-medium': {
-    onnx: '30b6781fbf12ea790f67bb8f2aca550fbc83ab63178d62d181b6aa8369172d29',
-    config: 'e262c16d7f192f69d4edd6b4ef8a5915379e67495fcc402f1ab15eeb33da3d36',
-  },
-  'en_US-libritts-high': {
-    onnx: '5478bb7603d3b7f6e6fc94a3df720647217bc73e4059a6caa7d2bf3f34840376',
-    config: '2efdc6d7f954588b8180132cbd9b8001933fdd00932c92bc92fd0d2028a9eb3d',
-  },
-  'nl_NL-alex-medium': {
-    onnx: 'a0a8607801723803898cacc2c0708fc9e7a05ee96bcd4fa2a9464a5102bfb79e',
-    config: '9ea643871742c038511b6aaf20e6fc098a78a11968122d2f6ca3e50403423f95',
-  },
-  'nl_BE-rdh-medium': {
-    onnx: '71fbf84e2601f41727b59032e224f676b2c5bae24ad0b4ae52fdb9267d08c741',
-    config: '65deb256664d22099b0db5bb36d96237a3e32e43885c6ce4ee6811e6c04a8d79',
-  },
-  'sv_SE-alma-medium': {
-    onnx: '748ea1721d9399bffdab7120fddc66bf444127d3ac8d79e7d50aa73bc3a6991d',
-    config: '6924380892f769afa92fc6b28ff91d558690d7fb4e3ef8cbf821cefadc8f38fe',
-  },
-  'sv_SE-nst-medium': {
-    onnx: '99ed2539d568c01598f15d1c175c0795f0cee61588baa77dc663edaab30dd9ce',
-    config: 'd45dd74cbb4eca58694bf04a97e243044092476f28a55ae26424f0653086980a',
-  },
-  'uk_UA-ukrainian_tts-medium': {
-    onnx: '3d9412227941720605876329ca2be7b9bcce6d8265779b483d6050b7c497045a',
-    config: '4e96e72917ca9b94edc77d6ccfee03a73f450ba2fc1ca93c2e562bc014e5aa55',
-  },
-};
+// ---------------------------------------------------------------------------
+// Dynamic Voice Registry (populated from verified index)
+// ---------------------------------------------------------------------------
 
-/** Default voice model URLs — HuggingFace CDN */
-const VOICE_URL_REGISTRY: Record<string, { onnx: string; config: string }> = {
-  'en_US-bryce-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/male/Bryce/en_US-bryce-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/male/Bryce/en_US-bryce-medium.onnx.json',
-  },
-  'en_US-ljspeech-high': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/female/Ljspeech/en_US-ljspeech-high.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/female/Ljspeech/en_US-ljspeech-high.onnx.json',
-  },
-  'en_US-kristin-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/female/Kristin/en_US-kristin-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/female/Kristin/en_US-kristin-medium.onnx.json',
-  },
-  'en_US-arctic-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/female/Arctic/en_US-arctic-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/female/Arctic/en_US-arctic-medium.onnx.json',
-  },
-  'en_GB-cori-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/UK/female/Cori/en_GB-cori-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/UK/female/Cori/en_GB-cori-medium.onnx.json',
-  },
-  'en_US-libritts-high': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/multi/Libritts/en_US-libritts-high.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/english/US/multi/Libritts/en_US-libritts-high.onnx.json',
-  },
-  'nl_NL-alex-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/dutch/NL/male/Alex/nl_NL-alex-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/dutch/NL/male/Alex/nl_NL-alex-medium.onnx.json',
-  },
-  'nl_BE-rdh-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/dutch/BE/male/Rdh/nl_BE-rdh-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/dutch/BE/male/Rdh/nl_BE-rdh-medium.onnx.json',
-  },
-  'sv_SE-alma-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/swedish/female/Alma/sv_SE-alma-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/swedish/female/Alma/sv_SE-alma-medium.onnx.json',
-  },
-  'sv_SE-nst-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/swedish/male/Nst/sv_SE-nst-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/swedish/male/Nst/sv_SE-nst-medium.onnx.json',
-  },
-  'uk_UA-ukrainian_tts-medium': {
-    onnx: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/ukrainian/multi/UkrainianTts/uk_UA-ukrainian_tts-medium.onnx',
-    config: 'https://huggingface.co/rinaldow/piper-onnx-durations/resolve/main/ukrainian/multi/UkrainianTts/uk_UA-ukrainian_tts-medium.onnx.json',
-  },
-};
+interface IndexModelEntry {
+  id: string;
+  modelUrl: string;
+  configUrl: string;
+  modelSha256: string;
+  configSha256: string;
+}
+
+/** Populated at runtime from the verified index. */
+const voiceSha256Registry = new Map<string, { onnx: string; config: string }>();
+const voiceUrlRegistry = new Map<string, { onnx: string; config: string }>();
+
+/** Tracks the index resolution state to prevent redundant fetches. */
+let voiceRegistriesResolved = false;
+let voiceRegistriesResolving: Promise<void> | null = null;
+
+/**
+ * Resolves the model cards via the standard infra pipeline (OPFS -> Local -> CDN).
+ * Once verified, it populates the dynamic voice registries.
+ */
+async function resolveVoiceRegistries(): Promise<void> {
+  if (voiceRegistriesResolved) return;
+  if (voiceRegistriesResolving) return voiceRegistriesResolving;
+
+  voiceRegistriesResolving = (async () => {
+    const filename = 'piper-model-cards.json';
+    
+    // Use standard infra pipeline (handles OPFS, Local, CDN, and Verification)
+    const response = await resolveInfraAsset(filename);
+    if (!response.ok) {
+      throw new Error(`[piper-gate] Index resolution failed: ${response.status} ${await response.text()}`);
+    }
+
+    const data = await response.arrayBuffer();
+    const models: IndexModelEntry[] = JSON.parse(new TextDecoder().decode(data));
+
+    for (const model of models) {
+      voiceSha256Registry.set(model.id, {
+        onnx: model.modelSha256,
+        config: model.configSha256,
+      });
+      voiceUrlRegistry.set(model.id, {
+        onnx: model.modelUrl,
+        config: model.configUrl,
+      });
+    }
+
+    voiceRegistriesResolved = true;
+    console.log(`[piper-gate] Model cards verified and registries populated: ${models.length} models.`);
+  })();
+
+  voiceRegistriesResolving.catch(() => { voiceRegistriesResolving = null; });
+  return voiceRegistriesResolving;
+}
+
 
 const MIME_REGISTRY: Record<string, string> = {
   '.wasm': 'application/wasm',
@@ -331,6 +306,7 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
     }
   } catch {
     // Local not available, fall through to CDN
+    console.log(`[piper-gate] Local file '${filename}' unavailable. Fetching from CDN.`);
   }
 
   // 3. CDN fallback
@@ -367,7 +343,7 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
 
 /**
  * Resolves voice assets (ONNX models and configs).
- * SHA-256 lookup: hardcoded registry → HF API for custom URLs.
+ * SHA-256 lookup: model cards registry → request headers → HF API.
  */
 async function resolveVoiceAsset(filename: string, request: Request): Promise<Response> {
   // Parse filename: "modelId.onnx" or "modelId.onnx.json"
@@ -376,13 +352,16 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
   const extension = isConfig ? 'config' : 'onnx';
   const downloadForCacheOnly = request.headers.get('x-piper-cache-download') === 'true';
 
+  // 0. Ensure model cards are resolved (populates dynamic registries)
+  await resolveVoiceRegistries();
+
   // 1. Get expected SHA-256
   let expectedSha256: string | null = null;
 
-  // Check hardcoded registry first
-  const voiceEntry = VOICE_SHA256_REGISTRY[modelId];
+  // Check model cards derived registry first
+  const voiceEntry = voiceSha256Registry.get(modelId);
   if (voiceEntry) {
-    expectedSha256 = extension === 'onnx' ? voiceEntry.onnx ?? null : voiceEntry.config ?? null;
+    expectedSha256 = extension === 'onnx' ? voiceEntry.onnx : voiceEntry.config;
   }
 
   // If not in registry, try to get from request headers (custom URL case)
@@ -429,9 +408,9 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
   // 3. Determine source URL
   let sourceUrl: string | null = null;
 
-  // Check hardcoded URL registry
-  if (voiceEntry && VOICE_URL_REGISTRY[modelId]) {
-    const urlEntry = VOICE_URL_REGISTRY[modelId];
+  // Check model cards derived URL registry
+  const urlEntry = voiceUrlRegistry.get(modelId);
+  if (urlEntry) {
     sourceUrl = extension === 'onnx' ? urlEntry.onnx : urlEntry.config;
   }
 

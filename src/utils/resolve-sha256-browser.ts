@@ -2,11 +2,6 @@ import type { HashInput } from "../types";
 
 /**
  * Cryptographic checksum utility for browser environments.
- * 
- * Browser-only: crypto.subtle is always available in Secure Contexts
- * (HTTPS, localhost). Service Workers are always Secure Contexts.
- * 
- * No fallback needed — this is a Sovereign Browser project.
  */
 
 /**

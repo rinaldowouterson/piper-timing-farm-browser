@@ -187,7 +187,7 @@ export async function toggleCallback(enabled: boolean) {
   }
 
   const modulePath = new URL('./piper-callback.js', self.location.href).href;
-  log(`Loading sovereign callback: ${modulePath}`);
+  log(`Loading synthesis callback: ${modulePath}`);
   
   try {
     // 1. Fetch to capture granular SW gateway errors (403/404)
@@ -205,12 +205,12 @@ export async function toggleCallback(enabled: boolean) {
       throw new Error(`Export 'onSynthesisComplete' is not a function in ${modulePath}`);
     }
     
-    log("Sovereign callback loaded successfully");
+    log("Synthesis callback loaded successfully");
     postMessage({ type: "callback-on", instanceId, configCounter: currentConfigCounter });
   } catch (err) {
     userCallback = null; // Clear state on failure
     const errorVal = err instanceof Error ? err.message : String(err);
-    error("Failed to load sovereign callback module:", errorVal);
+    error("Failed to load synthesis callback module:", errorVal);
     postMessage({ type: "callback-failed", instanceId, error: errorVal });
     throw err;
   }

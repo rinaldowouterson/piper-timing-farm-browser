@@ -89,6 +89,12 @@ export default defineConfig({
           src: 'node_modules/@diffusionstudio/piper-wasm/build/piper_phonemize.wasm',
           dest: 'assets',
           rename: { stripBase: 4 }
+        },
+        // Model cards — Single Source of Truth for voice integrity
+        {
+          src: 'src/piper-model-cards.json',
+          dest: 'assets',
+          rename: { stripBase: 1 }
         }
       ]
     })

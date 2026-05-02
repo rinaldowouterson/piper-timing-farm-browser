@@ -93,7 +93,7 @@ async function handleProvisionCommand(overrideRoot?: string) {
   // 2. DERIVE: Infrastructure target is always relative to the Static Root
   const pathInfraTarget = path.join(pathStaticRoot, 'piper-gate', 'infra');
 
-  console.log(`\nProvisioning Sovereign Gateway to ${dirStaticRoot}...`);
+  console.log(`\nProvisioning assets to ${dirStaticRoot}...`);
 
   // Ensure directories exist
   if (!fs.existsSync(pathInfraTarget)) {
@@ -132,7 +132,7 @@ async function handleProvisionCommand(overrideRoot?: string) {
   }
 
   console.log(`\nSuccess: ${filesProvisioned} assets provisioned to ${path.relative(cwd, pathStaticRoot)}/`);
-  console.log('Sovereign Gateway is now ready.\n');
+  console.log('Asset provisioning complete.\n');
 }
 
 function copyFiles(sourceDir: string, absTargetDir: string): number {

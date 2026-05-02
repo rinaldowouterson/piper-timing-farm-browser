@@ -15,8 +15,9 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 - **Order-preserving parallel execution**: Concurrent synthesis requests return results in request order (FIFO sequencing).
 - **Phoneme duration metadata**: Patched Piper models expose per-phoneme timing data for synchronization applications (lipsync, captions).
 - **Service Worker Gateway**: A security layer that intercepts asset requests to enforce SHA-256 integrity and OPFS caching.
-- **OPFS-based asset caching**: Models and WASM binaries persist in the Origin Private File System for offline operation.
-- **SHA-256 integrity verification**: Binary assets undergo cryptographic verification before execution.
+- **Local Indexing**: Models, WASM binaries, and the model cards are stored in the OPFS for offline use.
+- **Integrity Checks**: All assets and the model cards are verified via SHA-256 hashes before they are used.
+- **Scalable Metadata**: The model cards (`piper-model-cards.json`) centralizes model metadata and hashes, keeping the initial bundle size small while flexible for updates.
 - **Cross-Origin Isolation Ready**: The Service Worker gateway implements `Cross-Origin-Resource-Policy` (CORP) headers, ensuring the engine functions in hardened security environments (`COOP`/`COEP`).
 
 ---
@@ -125,9 +126,9 @@ The library requires a Service Worker gateway (`control-asset-sw.js`) that inter
 
 ### Asset Delivery & OPFS Storage
 
-The gateway manages two distinct storage directories:
-- **`/infra/`**: Core engine binaries (WASM, worker scripts). Verified against hardcoded hashes.
-- **`/voices/`**: Model weights and configs. Verified against HuggingFace LFS OIDs or custom hashes.
+The gateway manages two distinct paths:
+- **`/infra/`**: Core engine binaries (WASM, worker scripts) and the `piper-model-cards.json`. Verified against hardcoded hashes.
+- **`/voices/`**: Model weights and configs. Verified against the SHA-256 hashes defined in the model cards.
 
 The cache can be managed independently:
 - `clearPiperModelCache()`: Purges all downloaded voices while keeping the engine binaries.
@@ -161,7 +162,7 @@ The library selects a transition path based on the configuration delta:
 The farm supports updating parameters for requests already waiting in the queue without requiring a full model re-initialization or request cancellation.
 
 - **`updatePendingOptions(options: Partial<SynthesizeOptions>)`**: Updates `speed`, `volume`, or `speakerId` for all items in the main-thread buffer.
-- **Validation**: Manual updates to `speakerId` are validated against the active model's speaker manifest.
+- **Validation**: Manual updates to `speakerId` are validated against the active model's card.
 - **Active Requests**: Requests already dispatched to workers are not affected to prevent state desync.
 
 ---
@@ -192,6 +193,31 @@ export function onSynthesisComplete(result) {
   return { visemes: [...] };
 }
 ```
+
+---
+
+## Expanding the Model Library
+
+The library uses a **model cards** system to resolve voices. There are two paths for adding custom models, depending on whether you are working with a provisioned project or building from source.
+
+### Path 2A: Manual Update (Post-Provisioning)
+Use this if you have already run `npx piper-farm init` and want to add models directly to your existing project.
+
+1. **Update Cards**: Edit the provisioned `[static-root]/piper-gate/infra/piper-model-cards.json` to include your new model metadata and SHA-256 hashes.
+2. **Synchronize Trust Anchor**: 
+   - Calculate the SHA-256 hash of your updated `piper-model-cards.json`.
+   - Open the provisioned `[static-root]/control-asset-sw.js`.
+   - Update the `PIPER_MODEL_CARDS_SHA256` constant with the new hash to prevent integrity errors.
+
+### Path 2B: Build from Source (Pre-Distribution)
+Use this if you are forking the library to create a custom distribution with baked-in models.
+
+1. **Add Metadata**: Edit `src/piper-model-cards.json` in the library source with your new model details and hashes.
+2. **Execute Build**: Run `npm run build`. The pipeline automatically:
+   - Calculates the new **model cards** hash.
+   - Injects it into the Service Worker source code.
+   - Rebuilds all library artifacts (Service Worker, Workers, and CLI).
+3. **Provision Target**: Use your newly built library to provision your application (or copy the `dist/` contents and `piper-model-cards.json` to your server).
 
 ---
 
@@ -281,9 +307,10 @@ Queues a synthesis request.
 
 | Asset Layer | Integrity Source | Verification Point |
 | :--- | :--- | :--- |
-| Engine binaries | Hardcoded hashes | Service Worker mandatory check |
-| Voice models | HF OID / Registry | Service Worker mandatory check |
-| Worker Scripts | `INFRA_SHA256_REGISTRY`| Service Worker mandatory check |
+| Model Cards | `PIPER_MODEL_CARDS_SHA256` | Service Worker Bootstrapping |
+| Engine binaries | `INFRA_SHA256_REGISTRY` | Service Worker mandatory check |
+| Voice models | Verified Model Cards Registry | Service Worker mandatory check |
+| Worker Scripts | `INFRA_SHA256_REGISTRY` | Service Worker mandatory check |
 
 ### Error Propagation
 

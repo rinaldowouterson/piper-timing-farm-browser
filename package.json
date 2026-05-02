@@ -1,7 +1,7 @@
 {
   "name": "piper-timing-farm-browser",
   "version": "1.0.0",
-  "description": "High-performance Sovereign Piper TTS engine for the browser with transparent Service Worker integrity gateway.",
+  "description": "Piper TTS engine for the browser with transparent Service Worker integrity verification.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -26,7 +26,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "rm -rf dist && vite build",
+    "build": "npx tsx scripts/inject-model-cards-hash.ts && rm -rf dist && vite build && npx tsx scripts/inject-worker-hash.ts && vite build",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck",
     "preview": "vite preview",

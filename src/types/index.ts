@@ -1,3 +1,38 @@
+// --- Model Registry ---
+
+/**
+ * Definition of a Piper TTS model with metadata and integrity hashes.
+ * Source of truth: src/piper-model-cards.json
+ */
+export interface PiperModelDefinition {
+	/** Unique identifier (matches model filename without extension) */
+	id: string;
+	/** Human-readable name */
+	name: string;
+	/** ISO 639-1 language code */
+	language: string;
+	/** Country code */
+	country: string;
+	/** Voice gender or 'multi' for multi-speaker models */
+	gender?: "male" | "female" | "multi";
+	/** Model quality level */
+	quality: "low" | "medium" | "high";
+	/** URL to the ONNX model file */
+	modelUrl: string;
+	/** URL to the model config JSON */
+	configUrl: string;
+	/** Number of speakers in the model */
+	numSpeakers: number;
+	/** Whether this is a multi-speaker model */
+	isMultiSpeaker: boolean;
+	/** Speaker ID for single speaker models */
+	speakerId: number;
+	/** SHA-256 hash of the ONNX model file */
+	modelSha256: string;
+	/** SHA-256 hash of the model config JSON */
+	configSha256: string;
+}
+
 // --- Synthesis Output ---
 
 /**
@@ -149,7 +184,7 @@ export interface PiperWorkerFarm {
    * Updates parameters for all requests currently waiting in the queue.
    * This does NOT affect requests already dispatched to workers.
    */
-  updatePendingOptions(options: Partial<SynthesizeOptions>): void;
+  updatePendingOptions(options: Partial<SynthesizeOptions>): Promise<void>;
 	readonly metrics: {
 		queueLength: number;
 		busyWorkers: number;

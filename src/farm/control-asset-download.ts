@@ -19,7 +19,7 @@ interface DownloadEntry {
 /**
  * Stateful Download Controller for model assets.
  * 
- * Sovereign Gateway Architecture:
+ * Service Worker Architecture:
  * - All downloads route through `/piper-gate/voices/*` Service Worker gateway
  * - Service Worker handles: fetch → verify SHA-256 → write to OPFS → return
  * - Progress reporting via BroadcastChannel from Service Worker

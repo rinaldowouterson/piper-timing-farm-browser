@@ -89,11 +89,25 @@ vi.stubGlobal('navigator', {
 });
 
 // --- 2. Fetch Mock ---
-vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-    ok: true,
-    status: 200,
-    arrayBuffer: async () => new ArrayBuffer(0),
-    json: async () => ({})
+import modelsJson from '../src/piper-model-cards.json';
+
+vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+    // Return manifest data for manifest URL requests
+    if (typeof url === 'string' && url.includes('piper-model-cards.json')) {
+        return Promise.resolve({
+            ok: true,
+            status: 200,
+            arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(modelsJson)).buffer,
+            json: async () => modelsJson
+        });
+    }
+    // Default mock for all other fetch calls
+    return Promise.resolve({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new ArrayBuffer(0),
+        json: async () => ({})
+    });
 }));
 
 // --- 2. Web Worker Mock ---
