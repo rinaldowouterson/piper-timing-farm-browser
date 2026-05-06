@@ -53,7 +53,7 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 npm install piper-timing-farm-browser
 ```
 
-The `@diffusionstudio/piper-wasm` and `onnxruntime-web` peer dependencies document the engine versions used internally. WASM binaries are bundled in the build output and provisioned via `npx piper-farm init`.
+This library uses `@diffusionstudio/piper-wasm` (v1.0.0) and `onnxruntime-web` (v1.24.3) for its internal synthesis engine. WASM binaries are bundled in the build output and provisioned via `npx piper-farm init`.
 
 ---
 
