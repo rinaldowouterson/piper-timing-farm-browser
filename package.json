@@ -39,6 +39,7 @@
     "@huggingface/hub": "^2.11.0"
   },
   "peerDependencies": {
+    "@diffusionstudio/piper-wasm": "^1.0.0",
     "onnxruntime-web": "^1.24.3"
   },
   "author": "Rinaldo Wouterson",

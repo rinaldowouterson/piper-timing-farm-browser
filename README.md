@@ -53,7 +53,7 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 npm install piper-timing-farm-browser
 ```
 
-The `onnxruntime-web` peer dependency documents the ONNX Runtime version used internally. WASM binaries are bundled in the build output and provisioned via `npx piper-farm init`.
+The `@diffusionstudio/piper-wasm` and `onnxruntime-web` peer dependencies document the engine versions used internally. WASM binaries are bundled in the build output and provisioned via `npx piper-farm init`.
 
 ---
 
