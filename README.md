@@ -253,13 +253,14 @@ Queues a synthesis request.
 #### Request Lifecycle Management
 - `cancelSynthesis(requestId: string)`: Aborts a specific request. If active, the worker is replaced.
 - `cancelAllSynthesis()`: Aborts all pending and active requests.
+- `cancelDownload(modelId: string): Promise<void>`: Aborts an in-flight model download.
 - `updatePendingOptions(options: Partial<SynthesizeOptions>): void`: Updates parameters for queued requests.
 - `prepareTransition(targetModelId: string)`: Sets target model ID before `reinit()`.
 
 #### Cache & Instance Management
-- `clearPiperModelCache()`: Purges downloaded voices.
-- `clearPiperInfraCache()`: Purges WASM and Engine binaries.
-- `deletePiperModel(id: string)`: Purges a specific voice.
+- `clearPiperModelCache(): Promise<void>`: Purges downloaded voices.
+- `clearPiperInfraCache(): Promise<void>`: Purges WASM and Engine binaries.
+- `deletePiperModel(id: string): Promise<void>`: Purges a specific voice.
 - `terminate()`: Forcefully terminates all workers and cancels downloads.
 
 #### Observability & Events
