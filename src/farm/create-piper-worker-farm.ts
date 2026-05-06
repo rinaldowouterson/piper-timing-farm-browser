@@ -13,20 +13,6 @@ import { clearModelCache, clearInfraCache } from "../utils/resolve-cache-clearin
 import { transformPendingQueue } from "../utils/process-queue-transform";
 import type { PiperModelDefinition } from "../types";
 
-/**
- * Resolves numSpeakers for a model ID from the model cards.
- * Falls back to 1 if the model cards are unreachable or the model is not found.
- */
-async function resolveNumSpeakers(modelId: string): Promise<number> {
-  try {
-    const response = await fetch('/piper-gate/infra/piper-model-cards.json');
-    if (!response.ok) return 1;
-    const models: PiperModelDefinition[] = await response.json();
-    return models.find(m => m.id === modelId)?.numSpeakers ?? 1;
-  } catch {
-    return 1;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Piper Worker Farm Orchestrator
@@ -238,7 +224,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       // the new model's speaker limits before they are dispatched.
       const targetModelId = pool.getTargetModelId();
       if (targetModelId) {
-        const numSpeakers = await resolveNumSpeakers(targetModelId);
+        const numSpeakers = config.numSpeakers ?? 1;
 
         const pending = queue.filter(r => !activeRequests.has(r.requestId));
         transformPendingQueue(pending, {}, { numSpeakers });
@@ -247,13 +233,8 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       processQueue();
     },
 
-    async updatePendingOptions(options) {
-      // Resolve constraints for the current active/target model
-      const targetModelId = pool.getTargetModelId();
-      let numSpeakers = 1;
-      if (targetModelId) {
-        numSpeakers = await resolveNumSpeakers(targetModelId);
-      }
+    updatePendingOptions(options, constraints) {
+      const numSpeakers = constraints?.numSpeakers ?? 1;
 
       // Apply transformation to the waiting buffer
       const pending = queue.filter(r => !activeRequests.has(r.requestId));

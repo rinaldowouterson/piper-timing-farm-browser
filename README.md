@@ -253,7 +253,7 @@ Queues a synthesis request.
 #### Request Lifecycle Management
 - `cancelSynthesis(requestId: string)`: Aborts a specific request. If active, the worker is replaced.
 - `cancelAllSynthesis()`: Aborts all pending and active requests.
-- `updatePendingOptions(options: Partial<SynthesizeOptions>)`: Updates parameters for queued requests.
+- `updatePendingOptions(options: Partial<SynthesizeOptions>): void`: Updates parameters for queued requests.
 - `prepareTransition(targetModelId: string)`: Sets target model ID before `reinit()`.
 
 #### Cache & Instance Management

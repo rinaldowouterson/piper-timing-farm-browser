@@ -151,6 +151,8 @@ export interface FarmConfig {
   onProgress?: (state: DownloadState) => void;
   /** Global default speaker ID for all workers in the farm. */
   defaultSpeakerId?: number;
+  /** Number of speakers supported by the target model. Used for queue constraint validation. */
+  numSpeakers?: number;
 }
 
 export interface SynthesizeOptions {
@@ -184,7 +186,10 @@ export interface PiperWorkerFarm {
    * Updates parameters for all requests currently waiting in the queue.
    * This does NOT affect requests already dispatched to workers.
    */
-  updatePendingOptions(options: Partial<SynthesizeOptions>): Promise<void>;
+  updatePendingOptions(
+    options: Partial<SynthesizeOptions>,
+    constraints?: { numSpeakers?: number }
+  ): void;
 	readonly metrics: {
 		queueLength: number;
 		busyWorkers: number;

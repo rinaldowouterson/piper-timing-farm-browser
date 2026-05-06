@@ -32,6 +32,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
 } {
   let farm: PiperWorkerFarm | null = null;
   let activeModelId: string | null = null;
+  let activeNumSpeakers: number = 1;
   let activeCallbackPath: string | null = null;
   let activeDefaultSpeakerId: number | undefined = undefined;
   let loadingModelId: string | null = null;
@@ -106,7 +107,8 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
         }
 
         try {
-          await farm.reinit(config);
+          activeNumSpeakers = modelEntry?.numSpeakers ?? 1;
+          await farm.reinit({ ...config, numSpeakers: activeNumSpeakers });
         } catch (err) {
           if (err instanceof DOMException && err.name === 'AbortError') return;
           throw err;
@@ -117,6 +119,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       if (transitionId !== lastTransitionId) return;
 
       activeModelId = modelId;
+      activeNumSpeakers = modelEntry?.numSpeakers ?? 1;
       activeCallbackPath = useCallback ? 'piper-callback.js' : null;
       activeDefaultSpeakerId = config.defaultSpeakerId;
       loadingModelId = null;
@@ -133,8 +136,8 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       return farm.synthesize(text, options);
     },
 
-    async updatePendingOptions(options) {
-      await farm?.updatePendingOptions(options);
+    updatePendingOptions(options) {
+      farm?.updatePendingOptions(options, { numSpeakers: activeNumSpeakers });
     },
 
     cancelSynthesis(requestId: string) {
