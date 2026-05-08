@@ -5,9 +5,6 @@ import { PiperWorkerConfig } from '../../src/types';
 describe('Worker Pool Initialization Rejection', () => {
   const mockConfig: PiperWorkerConfig = {
     modelId: 'test-model',
-
-    onnxRuntimePaths: { mjs: '', wasm: '' },
-    piperPaths: { piperJs: '', piperWasm: '', piperData: '' , piperJsSha256: '' },
     instanceId: 0
   };
 
@@ -70,7 +67,7 @@ describe('Worker Pool Initialization Rejection', () => {
     await initTask;
 
     // 2. Trigger reinit with error
-    const reinitPromise = pool.reinit({ modelId: 'new-model', voiceId: 'new-model' });
+    const reinitPromise = pool.reinit({ modelId: 'new-model' });
     await new Promise(res => setTimeout(res, 0));
 
     // The shadow worker is the second one created
