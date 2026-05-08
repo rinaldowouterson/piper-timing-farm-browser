@@ -3,7 +3,7 @@
 A multi-threaded Text-to-Speech engine for browser applications, providing phoneme-level timing data through patched Piper models.
 
 [![Release](https://img.shields.io/npm/v/piper-timing-farm-browser)](https://www.npmjs.com/package/piper-timing-farm-browser)
-[![License](https://img.shields.io/npm/l/piper-timing-farm-browser)](https://github.com/rinaldo/piper-timing-farm-browser/blob/main/LICENSE)
+[![License](https://img.shields.io/npm/l/piper-timing-farm-browser)](https://github.com/rinaldowouterson/piper-timing-farm-browser/blob/main/LICENSE)
 
 ---
 
