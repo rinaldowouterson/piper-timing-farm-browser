@@ -11,7 +11,7 @@ import { execSync } from 'node:child_process';
  */
 describe('CLI > Provisioning Integrity (Unified Suite)', () => {
     const root = process.cwd();
-    const testSpace = path.join(root, 'tmp/unified-test');
+    const testSpace = path.join(root, 'tmp/unified-test-cli');
     const cliPath = path.join(root, 'dist/cli.js');
 
     const REQUIRED_INFRA = [

@@ -17,7 +17,7 @@ import { createPiperWorkerFarm } from '../src/farm/create-piper-worker-farm';
  */
 describe('CLI > Unified Framework Orchestration', () => {
     const root = process.cwd();
-    const testSpace = path.join(root, 'tmp/unified-test');
+    const testSpace = path.join(root, 'tmp/unified-test-vitals');
     const cliPath = path.join(root, 'dist/cli.js');
 
     beforeAll(() => {
