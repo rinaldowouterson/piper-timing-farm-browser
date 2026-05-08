@@ -24,6 +24,36 @@
     "README.md",
     "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rinaldowouterson/piper-timing-farm.git"
+  },
+  "keywords": [
+    "piper",
+    "tts",
+    "text-to-speech",
+    "speech-synthesis",
+    "phoneme",
+    "phoneme-timing",
+    "word-timing",
+    "lip-sync",
+    "visemes",
+    "multithreading",
+    "worker-pool",
+    "browser",
+    "web-worker",
+    "service-worker",
+    "offline",
+    "opfs",
+    "onnx",
+    "wasm",
+    "audio",
+    "esm",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "rm -rf dist && vite build && npx tsx scripts/inject-model-cards-hash.ts && npx tsx scripts/inject-worker-hash.ts",
@@ -33,7 +63,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:vitals": "vitest run .test/vitals.test.ts",
-    "test:provision": "npm run build && rm -rf tmp-test-provision && mkdir tmp-test-provision && cd tmp-test-provision && touch package.json && node ../dist/cli.js init && node ../dist/cli.js init custom-target && cd .."
+    "test:provision": "npm run build && rm -rf tmp-test-provision && mkdir tmp-test-provision && cd tmp-test-provision && touch package.json && node ../dist/cli.js init && node ../dist/cli.js init custom-target && cd ..",
+    "prepublishOnly": "npx tsx scripts/verify-release-readiness.ts"
   },
   "dependencies": {
     "@huggingface/hub": "^2.11.0"
