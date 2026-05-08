@@ -1,6 +1,6 @@
 export interface PhonemizerOutput {
 	phoneme_ids: number[];
-	phonemes?: string[];
+	phonemes: string[];
 }
 
 export interface PiperPhonemizerModule {

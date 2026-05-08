@@ -30,13 +30,14 @@ import type { PiperModelDefinition } from "../types";
  * 2. Implements a Parallel FIFO queue for deterministic synthesis order.
  * 3. Supports live model re-initialization (reinit).
  */
-export function createPiperWorkerFarm(): PiperWorkerFarm {
+export function createPiperWorkerFarm(options?: { debug?: boolean }): PiperWorkerFarm {
   const queue: PendingRequest[] = [];
   /** Maps requestId → worker id for actively processing requests. */
   const activeRequests = new Map<string, number>();
   const listeners = new Set<(status: RequestStatusPayload) => void>();
   const logListeners = new Set<(log: WorkerLogPayload) => void>();
   const pool = createWorkerPool(onReady, onResult, onLogMessage);
+  const debug = options?.debug ?? false;
 
   function emit(payload: RequestStatusPayload) {
     listeners.forEach(l => l(payload));
@@ -74,7 +75,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       }
     } else if (msg.type === 'error') {
       const { instanceId, error, originalRequest } = msg;
-      console.error(`Worker ${instanceId} error:`, error);
+      if (debug) console.error(`Worker ${instanceId} error:`, error);
       
       // Determine if this was a physical crash (worker already purged by pool) or logical error
       const worker = pool.getWorkers().find(w => w.id === instanceId);
@@ -118,7 +119,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
               pending.reject(new Error(`Worker Termination (Retry Exhausted): ${error}`));
               queue.splice(queue.indexOf(pending), 1);
             } else {
-              console.warn(`[Farm] Worker ${instanceId} terminated during task ${requestId}. Retrying on next available worker.`);
+              if (debug) console.warn(`[Farm] Worker ${instanceId} terminated during task ${requestId}. Retrying on next available worker.`);
               // Note: We don't splice from queue, so processQueue() will pick it up again
             }
           } else {
@@ -201,10 +202,17 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       const piperConfig: PiperWorkerConfig = {
         modelId: config.modelId,
         useCallback: config.useCallback,
-        defaultSpeakerId: config.defaultSpeakerId
+        defaultSpeakerId: config.defaultSpeakerId,
+        debug
       };
       const cpuInstances = config.cpuInstances ?? 2;
       await pool.init(piperConfig, cpuInstances);
+
+      // Broadcast debug state to the Service Worker gateway
+      const debugChannel = new BroadcastChannel('piper-gate-debug');
+      debugChannel.postMessage({ debug });
+      debugChannel.close();
+
       processQueue();
     },
 
@@ -216,6 +224,7 @@ export function createPiperWorkerFarm(): PiperWorkerFarm {
       if (config.modelId) workerConfig.modelId = config.modelId;
       if (config.useCallback !== undefined) workerConfig.useCallback = config.useCallback;
       if (config.defaultSpeakerId !== undefined) workerConfig.defaultSpeakerId = config.defaultSpeakerId;
+      workerConfig.debug = debug;
 
       await pool.reinit(workerConfig, config.cpuInstances);
 

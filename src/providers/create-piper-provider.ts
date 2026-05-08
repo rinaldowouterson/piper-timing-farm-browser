@@ -23,7 +23,7 @@ import { setupAssetSW } from "../utils/setup-asset-sw";
  * 3. Once provisioned, it performs a re-initialization (reinit).
  * 4. Speaker ID flows per-request without infrastructure changes.
  */
-export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & { 
+export function createPiperProvider(options?: { debug?: boolean }): Omit<PiperWorkerFarm, 'reinit'> & { 
   getActiveModelId: () => string | null;
   cancelDownload: (modelId: string) => Promise<void>;
   deletePiperModel: (modelId: string) => Promise<void>;
@@ -89,7 +89,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       // 3. Farm Setup or Hotswap
       // The WorkerPool internally handles Surgical Updates vs Shadow Pool transitions.
       if (!farm) {
-        farm = createPiperWorkerFarm();
+        farm = createPiperWorkerFarm(options);
         farmUnsubscribe = farm.onQueueStatus((status) => queueListeners.forEach(l => l(status)));
         farmLogUnsubscribe = farm.onLog((log) => logListeners.forEach(l => l(log)));
         await farm.init(config);

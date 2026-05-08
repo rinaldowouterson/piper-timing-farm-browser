@@ -36,13 +36,17 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
   - [Worker Callbacks](#worker-callbacks)
 - [Security Architecture](#security-architecture)
   - [Integrity Verification Pipeline](#integrity-verification-pipeline)
-  - [Broadcast Error Architecture](#broadcast-error-architecture)
+  - [Error Propagation](#error-propagation)
 - [API Reference](#api-reference)
+  - [createPiperProvider](#createpiperprovideroptions)
+  - [Standalone Cache Utilities](#standalone-cache-utilities)
+- [Type Definitions](#type-definitions)
 - [CLI: Asset Provisioning](#cli-asset-provisioning)
 - [Debugging & Troubleshooting](#debugging--troubleshooting)
-  - [Verbose Lifecycle Logging](#verbose-lifecycle-logging)
+  - [Debug Mode](#debug-mode)
+  - [Service Worker Log Prefixes](#service-worker-log-prefixes)
   - [Path Deviation Diagnostics](#path-deviation-diagnostics)
-- [Type Definitions](#type-definitions)
+  - [Programmatic Log Access](#programmatic-log-access)
 - [License](#license)
 
 ---
@@ -74,13 +78,15 @@ This CLI command detects your framework (SvelteKit, Vite, Next.js, etc.) and cop
 ```typescript
 import { createPiperProvider } from "piper-timing-farm-browser";
 
-const provider = createPiperProvider();
+const provider = createPiperProvider({ debug: true });
 
 await provider.init({
   modelId: "en_US-bryce-medium",
   onProgress: (state) => console.log(`Downloading: ${Math.round(state.progress * 100)}%`)
 });
 ```
+
+> **Note**: The `debug` option enables diagnostic console output across all internal components (workers, worker pool, and Service Worker gateway). Omit it or set it to `false` for production use — no console output will be emitted.
 
 ### Step 3: Synthesize
 
@@ -223,9 +229,13 @@ Use this if you are forking the library to create a custom distribution with bak
 
 ## API Reference
 
-### `createPiperProvider()`
+### `createPiperProvider(options?)`
 
-The recommended high-level API.
+The recommended high-level API. Wraps the worker farm with automatic model downloading, Service Worker registration, and background model switching.
+
+| Option | Type | Default | Purpose |
+| :--- | :--- | :--- | :--- |
+| `debug` | `boolean` | `false` | Enable diagnostic console output across all internal components. |
 
 #### `init(config: FarmConfig): Promise<void>`
 Initializes or re-initializes the farm.
@@ -254,7 +264,7 @@ Queues a synthesis request.
 - `cancelAllSynthesis()`: Aborts all pending and active requests.
 - `cancelDownload(modelId: string): Promise<void>`: Aborts an in-flight model download.
 - `updatePendingOptions(options: Partial<SynthesizeOptions>): void`: Updates parameters for queued requests.
-- `prepareTransition(targetModelId: string)`: Sets target model ID before `reinit()`.
+- `prepareTransition(targetModelId: string)`: Signals that a model switch is incoming. Called automatically by `init()` during background transitions.
 
 #### Cache & Instance Management
 - `clearPiperModelCache(): Promise<void>`: Purges downloaded voices.
@@ -263,10 +273,28 @@ Queues a synthesis request.
 - `terminate()`: Forcefully terminates all workers and cancels downloads.
 
 #### Observability & Events
+- `isInitialized()`: Returns whether the farm is initialized.
 - `getActiveModelId()`: Returns the currently active model ID.
 - `getDownloadState()`: Returns a `Map<id, DownloadState>` of active downloads.
-- `onLog((log: WorkerLogPayload) => void)`: Subscribe to worker logs.
-- `onQueueStatus((status: RequestStatusPayload) => void)`: Subscribe to queue events.
+- `metrics`: A read-only object with `queueLength`, `busyWorkers`, and `totalWorkers`.
+- `onLog((log: WorkerLogPayload) => void)`: Subscribe to worker lifecycle logs. Returns an unsubscribe function.
+- `onQueueStatus((status: RequestStatusPayload) => void)`: Subscribe to queue state transitions. Returns an unsubscribe function.
+
+---
+
+### Standalone Cache Utilities
+
+These functions are available as direct imports for manual cache management without an active farm or provider instance.
+
+```typescript
+import { clearModelCache, clearInfraCache, deletePiperModel } from "piper-timing-farm-browser";
+```
+
+| Function | Description |
+| :--- | :--- |
+| `clearModelCache()` | Purges all downloaded voice models from OPFS via the Service Worker. |
+| `clearInfraCache()` | Purges all engine binaries (WASM, workers) from OPFS via the Service Worker. |
+| `deletePiperModel(modelId)` | Purges a specific voice model from OPFS via the Service Worker. |
 
 ---
 
@@ -275,16 +303,21 @@ Queues a synthesis request.
 ### `AudioSynthesisResult`
 ```typescript
 {
+  requestId: string;
   audioData: Float32Array;
   sampleRate: number;
   durationMs: number;
   metadata: {
+    phonemeIds: number[];
     phonemes: string[];
     durations: Float32Array;
+    totalAudioDurationMs: number;
+    sampleRate: number;
+    hopSize: number;
     modelId: string;
-    speakerId: number;
+    generationTimeMs?: number;
+    speakerId?: number;
   };
-  callbackResult?: any;
 }
 ```
 
@@ -296,6 +329,48 @@ Queues a synthesis request.
   state: 'queued' | 'processing' | 'completed' | 'cancelled' | 'error';
   modelId?: string;
   error?: string;
+}
+```
+
+### `WorkerLogPayload`
+```typescript
+{
+  level: 'info' | 'warn' | 'error' | 'debug';
+  message: string;
+  workerId: number;
+  timestamp: number;
+}
+```
+
+### `DownloadState`
+```typescript
+{
+  modelId: string;
+  status: 'pending' | 'downloading' | 'complete' | 'error';
+  bytesDownloaded: number;
+  bytesTotal: number;
+  /** 0.0 to 1.0 */
+  progress: number;
+  error?: string;
+}
+```
+
+### `PiperModelDefinition`
+```typescript
+{
+  id: string;
+  name: string;
+  language: string;
+  country: string;
+  gender?: 'male' | 'female' | 'multi';
+  quality: 'low' | 'medium' | 'high';
+  modelUrl: string;
+  configUrl: string;
+  numSpeakers: number;
+  isMultiSpeaker: boolean;
+  speakerId: number;
+  modelSha256: string;
+  configSha256: string;
 }
 ```
 
@@ -328,12 +403,26 @@ Provisions the gateway assets. The Service Worker is placed in the `[static-root
 
 ## Debugging & Troubleshooting
 
-### Verbose Lifecycle Logging
+### Debug Mode
 
-The Service Worker provides detailed logs to help you track asset resolution:
+All diagnostic console output is suppressed by default. To enable it, pass `{ debug: true }` when creating the provider:
+
+```typescript
+const provider = createPiperProvider({ debug: true });
+```
+
+This enables diagnostic output across:
+- **Service Worker Gateway**: `[piper-gate]` prefixed messages for cache hits, misses, integrity checks, and path deviations.
+- **Worker Pool**: `[WorkerPool]` prefixed messages for worker spawning, crashes, and replacements.
+- **Worker Instances**: `[PiperWorker:N:CPU]` prefixed messages for init, synthesis, and callback operations.
+- **Farm Orchestrator**: Worker error and retry messages.
+
+### Service Worker Log Prefixes
+
+When `debug: true` is active, the Service Worker logs use these prefixes:
 - `[piper-gate] [Cache Hit]`: Asset verified and served from OPFS.
 - `[piper-gate] [Stale Cache]`: Detected an integrity mismatch (e.g., from an older build). The entry is deleted and re-fetched.
-- `[piper-gate] [Cache Restored]`: Asset successfully re-downloaded, verified, and saved to OPFS.
+- `[piper-gate] [Cache Restored]`: Asset re-downloaded, verified, and saved to OPFS.
 - `[piper-gate] [Cache Miss]`: Asset verified but not cached (OPFS storage issue, e.g., quota exceeded). The asset is still delivered to the caller.
 
 ### Path Deviation Diagnostics
@@ -347,6 +436,20 @@ This helps you identify code that is bypassing the security and caching layer.
 
 If a worker fails to initialize (e.g., due to a MIME type mismatch on your server), the library reports a descriptive error:
 > `[Worker Error] Instance 0: Worker failed to initialize or load (possible MIME mismatch or Network Error)`
+
+### Programmatic Log Access
+
+Regardless of the `debug` flag, worker lifecycle events are always available via the `onLog()` subscription. This allows you to capture diagnostics without enabling console output:
+
+```typescript
+const unsubscribe = provider.onLog((log) => {
+  // log.level: 'info' | 'warn' | 'error' | 'debug'
+  // log.message: string
+  // log.workerId: number
+  // log.timestamp: number
+  myLogger.send(log);
+});
+```
 
 ---
 

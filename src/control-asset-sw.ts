@@ -57,7 +57,25 @@ const OPFS_VOICES_DIR = 'voices';
 
 const PIPER_MODEL_CARDS_SHA256 = '1111111111111111111111111111111111111111111111111111111111111111'; // Patched post-build by scripts/inject-model-cards-hash.ts
 const PROCESS_PIPER_SYNTHESIS_WORKER_SHA256 = '0000000000000000000000000000000000000000000000000000000000000000'; // Patched post-build by scripts/inject-worker-hash.ts
-const PIPER_CALLBACK_SHA256 = ''; // User-provided; integrity must be set by the consumer at runtime.
+
+
+/**
+ * Diagnostic Logging Configuration.
+ * Toggled at runtime via BroadcastChannel('piper-gate-debug') from the farm.
+ */
+let DEBUG_GATE = false;
+
+const debugChannel = new BroadcastChannel('piper-gate-debug');
+debugChannel.onmessage = (e: MessageEvent<{ debug: boolean }>) => {
+  DEBUG_GATE = e.data.debug;
+};
+
+function gateLog(level: 'log' | 'warn' | 'error', message: string, ...args: unknown[]) {
+  if (!DEBUG_GATE && level === 'log') return;
+  console[level](message, ...args);
+}
+
+
 
 /** Infra asset SHA-256 hashes (ORT WASM, Piper phonemize) — hardcoded for security */
 const INFRA_SHA256_REGISTRY: Record<string, string> = {
@@ -69,7 +87,7 @@ const INFRA_SHA256_REGISTRY: Record<string, string> = {
   'piper_phonemize.wasm':        'b777cd107a91d2bcc6a1ea46f2c26a662a7407394fe84589198aeaa83dd7a9d6',
   'process-piper-synthesis.worker.js': PROCESS_PIPER_SYNTHESIS_WORKER_SHA256,
   'piper-model-cards.json':     PIPER_MODEL_CARDS_SHA256,
-  'piper-callback.js':           PIPER_CALLBACK_SHA256,
+  'piper-callback.js':           "",
 };
 
 /** CDN fallback URLs for infra assets */
@@ -134,7 +152,7 @@ async function resolveVoiceRegistries(): Promise<void> {
     }
 
     voiceRegistriesResolved = true;
-    console.log(`[piper-gate] Model cards verified and registries populated: ${models.length} models.`);
+    gateLog('log', `[piper-gate] Model cards verified and registries populated: ${models.length} models.`);
   })();
 
   voiceRegistriesResolving.catch(() => { voiceRegistriesResolving = null; });
@@ -207,7 +225,7 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
   if (url.origin === sw.location.origin && !url.pathname.startsWith('/piper-gate/')) {
     const filename = url.pathname.split('/').pop() || '';
     if (isPiperAsset(filename)) {
-      console.warn(
+      gateLog('warn',
         `[piper-gate] [Path Deviation] Detected request for Piper asset '${filename}' at non-gateway path: ${url.pathname}. ` +
         `This request bypasses Service Worker integrity verification and OPFS caching. ` +
         `Please update the requester to use: /piper-gate/.../${filename}`
@@ -281,10 +299,10 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
   if (cached) {
     const isValid = await verifySha256(cached, expectedSha256);
     if (isValid) {
-      console.log(`[piper-gate] [Cache Hit] '${filename}' verified from OPFS.`);
+      gateLog('log', `[piper-gate] [Cache Hit] '${filename}' verified from OPFS.`);
       return createVerifiedResponse(cached, { filename });
     } else {
-      console.log(`[piper-gate] [Stale Cache] OPFS integrity mismatch for '${filename}'. Deleting stale entry to trigger re-fetch.`);
+      gateLog('log', `[piper-gate] [Stale Cache] OPFS integrity mismatch for '${filename}'. Deleting stale entry to trigger re-fetch.`);
       await deleteFromOpfs(OPFS_INFRA_DIR, filename);
     }
   }
@@ -298,19 +316,19 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
       if (isValid) {
         const cached = await writeToOpfs(OPFS_INFRA_DIR, filename, data);
         if (cached) {
-          console.log(`[piper-gate] [Cache Restored] '${filename}' verified and cached.`);
+          gateLog('log', `[piper-gate] [Cache Restored] '${filename}' verified and cached.`);
         } else {
-          console.warn(`[piper-gate] [Cache Miss] '${filename}' verified but not cached (storage issue).`);
+          gateLog('warn',`[piper-gate] [Cache Miss] '${filename}' verified but not cached (storage issue).`);
         }
         return createVerifiedResponse(data, { filename });
       } else {
-        console.error(`[piper-gate] Local infra asset integrity mismatch: ${filename}`);
+        gateLog('error', `[piper-gate] Local infra asset integrity mismatch: ${filename}`);
         // Fall through to CDN
       }
     }
   } catch {
     // Local not available, fall through to CDN
-    console.log(`[piper-gate] Local file '${filename}' unavailable. Fetching from CDN.`);
+    gateLog('log', `[piper-gate] Local file '${filename}' unavailable. Fetching from CDN.`);
   }
 
   // 3. CDN fallback
@@ -333,13 +351,13 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
 
     const cached = await writeToOpfs(OPFS_INFRA_DIR, filename, data);
     if (cached) {
-      console.log(`[piper-gate] Infra asset from CDN verified and cached: ${filename}`);
+      gateLog('log', `[piper-gate] Infra asset from CDN verified and cached: ${filename}`);
     } else {
-      console.warn(`[piper-gate] Infra asset from CDN verified but not cached: ${filename}`);
+      gateLog('warn',`[piper-gate] Infra asset from CDN verified but not cached: ${filename}`);
     }
     return createVerifiedResponse(data, { filename });
   } catch (err: unknown) {
-    console.error(`[piper-gate] CDN fetch failed for ${filename}:`, err);
+    gateLog('error', `[piper-gate] CDN fetch failed for ${filename}:`, err);
     return new Response(`[piper-gate] CDN unreachable for: ${filename}`, { status: 502 });
   }
 }
@@ -372,7 +390,7 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
 
   // SHA-256 is mandatory — reject if model is not in registry
   if (!expectedSha256) {
-    console.error(`[piper-gate] No SHA-256 available for voice: ${filename}`);
+    gateLog('error', `[piper-gate] No SHA-256 available for voice: ${filename}`);
     return new Response(
       `[piper-gate] SHA-256 required for voice asset: ${filename}. ` +
       `Model must be present in piper-model-cards.json.`,
@@ -385,10 +403,10 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
   if (cached) {
     const isValid = await verifySha256(cached, expectedSha256);
     if (isValid) {
-      console.log(`[piper-gate] [Cache Hit] Voice asset verified from OPFS: ${filename}`);
+      gateLog('log', `[piper-gate] [Cache Hit] Voice asset verified from OPFS: ${filename}`);
       return createVerifiedResponse(cached, { filename });
     } else {
-      console.log(`[piper-gate] [Stale Cache] Voice integrity mismatch for '${filename}'. Purging stale entry.`);
+      gateLog('log', `[piper-gate] [Stale Cache] Voice integrity mismatch for '${filename}'. Purging stale entry.`);
       await deleteFromOpfs(OPFS_VOICES_DIR, filename);
     }
   }
@@ -412,7 +430,7 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
 
     if (hfInfo) {
       // Hugging Face Hub (Xet Protocol) — optimized CDN handling
-      console.log(`[piper-gate] Using HF Hub download for: ${filename}`);
+      gateLog('log', `[piper-gate] Using HF Hub download for: ${filename}`);
       const blob = await downloadFile({
         repo: hfInfo.repo,
         revision: hfInfo.revision,
@@ -484,7 +502,7 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
     // Verify integrity
     const isValid = await verifySha256(data, expectedSha256);
     if (!isValid) {
-      console.error(`[piper-gate] Voice asset integrity mismatch: ${filename}`);
+      gateLog('error', `[piper-gate] Voice asset integrity mismatch: ${filename}`);
       return new Response(`[piper-gate] Integrity mismatch for: ${filename}`, { status: 403 });
     }
 
@@ -492,9 +510,9 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
     const cached = await writeToOpfs(OPFS_VOICES_DIR, filename, data);
 
     if (cached) {
-      console.log(`[piper-gate] [Cache Restored] Voice asset '${filename}' verified and cached.`);
+      gateLog('log', `[piper-gate] [Cache Restored] Voice asset '${filename}' verified and cached.`);
     } else {
-      console.warn(`[piper-gate] [Cache Miss] Voice asset '${filename}' verified but not cached (storage issue).`);
+      gateLog('warn',`[piper-gate] [Cache Miss] Voice asset '${filename}' verified but not cached (storage issue).`);
     }
 
     // MEMORY FIX: If requester only wanted to trigger cache, return 204 No Content
@@ -510,7 +528,7 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
     if (err instanceof Error && err.name === 'AbortError') {
       return new Response(`[piper-gate] Download aborted: ${filename}`, { status: 499 });
     }
-    console.error(`[piper-gate] Download failed for ${filename}:`, err);
+    gateLog('error', `[piper-gate] Download failed for ${filename}:`, err);
     return new Response(`[piper-gate] Download failed for: ${filename}`, { status: 502 });
   }
 }
@@ -544,7 +562,7 @@ async function readFromOpfs(directory: string, filename: string): Promise<ArrayB
     const file = await handle.getFile();
     return await file.arrayBuffer();
   } catch (err: unknown) {
-    console.warn(`[piper-gate] OPFS read failed for ${directory}/${filename}:`, err);
+    gateLog('warn',`[piper-gate] OPFS read failed for ${directory}/${filename}:`, err);
     return null;
   }
 }
@@ -559,7 +577,7 @@ async function writeToOpfs(directory: string, filename: string, data: ArrayBuffe
     await writable.close();
     return true;
   } catch (err: unknown) {
-    console.warn(`[piper-gate] OPFS write failed for ${directory}/${filename}:`, err);
+    gateLog('warn',`[piper-gate] OPFS write failed for ${directory}/${filename}:`, err);
     return false;
   }
 }
@@ -571,7 +589,7 @@ async function deleteFromOpfs(directory: string, filename: string): Promise<void
     await dir.removeEntry(filename);
   } catch (err: unknown) {
     // File doesn't exist — ignore
-    console.warn(`[piper-gate] OPFS delete failed for ${directory}/${filename}:`, err);
+    gateLog('warn',`[piper-gate] OPFS delete failed for ${directory}/${filename}:`, err);
   }
 }
 
@@ -587,7 +605,7 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
     if (assetPath === 'voices/' || assetPath === 'voices') {
       try {
         await root.removeEntry('voices', { recursive: true });
-        console.log('[piper-gate] Voice cache cleared (recursive)');
+        gateLog('log', '[piper-gate] Voice cache cleared (recursive)');
       } catch (err: unknown) {
         const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
         if (!isNotFound) throw err;
@@ -599,7 +617,7 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
     if (assetPath === 'infra/' || assetPath === 'infra') {
       try {
         await root.removeEntry('infra', { recursive: true });
-        console.log('[piper-gate] Infra asset cache cleared (recursive)');
+        gateLog('log', '[piper-gate] Infra asset cache cleared (recursive)');
       } catch (err: unknown) {
         const isNotFound = err instanceof Error && (err.name === 'NotFoundError' || err.message.toLowerCase().includes('not found'));
         if (!isNotFound) throw err;
@@ -623,14 +641,14 @@ async function processOpfsDeletion(assetPath: string): Promise<Response> {
             if (!isNotFound) throw err;
           }
         }
-        console.log(`[piper-gate] Model assets purged: ${modelId}`);
+        gateLog('log', `[piper-gate] Model assets purged: ${modelId}`);
       }
       return new Response(null, { status: 204 });
     }
 
     return new Response(`[piper-gate] Unsupported deletion path: ${assetPath}`, { status: 400 });
   } catch (err: unknown) {
-    console.error(`[piper-gate] Deletion failed for ${assetPath}:`, err);
+    gateLog('error', `[piper-gate] Deletion failed for ${assetPath}:`, err);
     return new Response(`[piper-gate] Internal OPFS Error`, { status: 500 });
   }
 }

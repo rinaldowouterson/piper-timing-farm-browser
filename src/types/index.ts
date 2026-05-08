@@ -45,13 +45,13 @@ export type HashInput = string | ArrayBuffer | Uint8Array;
  */
 export interface PiperMetadata {
 	phonemeIds: number[];
-	phonemes?: string[];
-	durations?: Float32Array;
+	phonemes: string[];
+	durations: Float32Array;
 	totalAudioDurationMs: number;
 	sampleRate: number;
 	hopSize: number;
   /** The ID of the model used for this specific result. */
-  modelId?: string;
+  modelId: string;
 }
 
 export type RequestState = 'queued' | 'processing' | 'completed' | 'cancelled' | 'error';
@@ -126,6 +126,8 @@ export interface PiperWorkerConfig {
   useCallback?: boolean;
   /** Global default speaker ID for this worker instance. */
   defaultSpeakerId?: number;
+  /** Enable diagnostic console logging in workers. Defaults to false. */
+  debug?: boolean;
 }
 
 /**

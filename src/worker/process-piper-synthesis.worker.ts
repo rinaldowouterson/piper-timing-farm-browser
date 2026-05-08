@@ -5,7 +5,7 @@ import type {
   PiperWorkerMessageOut, 
   PiperWorkerConfig,
   PiperModelConfig as ModelConfig,
-  AudioSynthesisResult
+  AudioSynthesisResult,
 } from "../types";
 import type { 
   PiperPhonemizerModule, 
@@ -32,6 +32,13 @@ let userCallback: ((result: AudioSynthesisResult) => unknown) | null = null;
 // --- Logging ---
 const PREFIX = () => `[PiperWorker:${instanceId}:${deviceLabel}]`;
 
+/**
+ * Diagnostic Logging Configuration.
+ * To disable console noise, set to false. Note that sendLog() still broadcasts
+ * events to the main thread listener for developer visibility.
+ */
+let DEBUG_WORKER = false;
+
 function sendLog(level: 'info' | 'warn' | 'error' | 'debug', message: string) {
   self.postMessage({
     type: 'log',
@@ -46,21 +53,22 @@ function sendLog(level: 'info' | 'warn' | 'error' | 'debug', message: string) {
 
 const log = (msg: string, ...args: unknown[]) => {
   const fullMsg = `${PREFIX()} ${msg}`;
-  console.log(fullMsg, ...args);
+  if (DEBUG_WORKER) console.log(fullMsg, ...args);
   sendLog('info', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
 };
 
 const warn = (msg: string, ...args: unknown[]) => {
   const fullMsg = `${PREFIX()} ${msg}`;
-  console.warn(fullMsg, ...args);
+  if (DEBUG_WORKER) console.warn(fullMsg, ...args);
   sendLog('warn', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
 };
 
 const error = (msg: string, ...args: unknown[]) => {
   const fullMsg = `${PREFIX()} ${msg}`;
-  console.error(fullMsg, ...args);
+  if (DEBUG_WORKER) console.error(fullMsg, ...args);
   sendLog('error', msg + (args.length ? ' ' + JSON.stringify(args) : ''));
 };
+
 
 // --- Message Handler ---
 self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
@@ -113,10 +121,11 @@ const PIPER_ASSET_URLS = {
 
 // --- Initialization ---
 export async function setupPiperWorker(config: PiperWorkerConfig) {
-  const { modelId, instanceId: id, useCallback, defaultSpeakerId: defaultSid } = config;
+  const { modelId, instanceId: id, useCallback, defaultSpeakerId: defaultSid, debug } = config;
   instanceId = id || 0;
   currentModelId = modelId;
   defaultSpeakerId = defaultSid || 0;
+  DEBUG_WORKER = debug ?? false;
 
   log(`=== INIT START [${modelId}] ===`, { useCallback, defaultSpeakerId });
   
@@ -264,7 +273,7 @@ export async function processPiperSynthesis(
       speakerId: resolvedSpeakerId,
       phonemeIds,
       phonemes,
-      durations: durations || undefined,
+      durations,
       totalAudioDurationMs: durationMs,
       sampleRate: modelConfig.audio.sample_rate,
       hopSize: 256
@@ -335,7 +344,7 @@ function phonemize(text: string, voice: string) {
     const output = lastPhonemizerOutput as unknown as PhonemizerOutput;
     return {
       phonemeIds: output.phoneme_ids,
-      phonemes: output.phonemes || []
+      phonemes: output.phonemes
     };
   }
   throw new Error("Phonemization failed");

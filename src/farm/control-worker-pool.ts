@@ -404,7 +404,7 @@ function createWorker(
     } else {
       errorMessage = "Worker failed to initialize or load (possible MIME mismatch or Network Error)";
     }
-    console.error(`[WorkerPool] [Worker Error] Instance ${id}: ${errorMessage}`, e);
+    if (config.debug) console.error(`[WorkerPool] [Worker Error] Instance ${id}: ${errorMessage}`, e);
     
     // Physically terminate and remove before notifying the orchestrator
     worker.terminate();
@@ -413,14 +413,15 @@ function createWorker(
     onMessage({ type: "error", instanceId: id, error: errorMessage });
   };
 
-  console.log(`[WorkerPool] Spawning worker ${id} with useCallback:`, config.useCallback || false);
+  if (config.debug) console.log(`[WorkerPool] Spawning worker ${id} with useCallback:`, config.useCallback || false);
   
   // SCRUB CONFIG: Ensure no functions (like onProgress) are sent to worker (DataCloneError)
   const workerConfig = {
     modelId: config.modelId,
     instanceId: id,
     useCallback: config.useCallback,
-    defaultSpeakerId: config.defaultSpeakerId
+    defaultSpeakerId: config.defaultSpeakerId,
+    debug: config.debug
   };
 
   worker.postMessage({ type: "init", config: workerConfig, configCounter: targetCounter });
