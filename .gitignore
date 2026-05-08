@@ -5,6 +5,7 @@ public/assets
 public/wasm
 src/worker/assets
 tmp-test-provision
+plans/
 
 # Output
 .output
@@ -13,6 +14,7 @@ tmp-test-provision
 .wrangler
 /.svelte-kit
 /build
+
 
 # OS
 .DS_Store

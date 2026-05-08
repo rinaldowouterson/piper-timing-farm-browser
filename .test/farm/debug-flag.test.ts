@@ -42,7 +42,7 @@ describe('Debug Flag', () => {
 
 		// Verify no console.log was called (worker spawning is gated)
 		const poolLogs = logSpy.mock.calls.filter(
-			(c) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
+			(c: any) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
 		);
 		expect(poolLogs.length).toBe(0);
 
@@ -54,7 +54,7 @@ describe('Debug Flag', () => {
 		await farm.init(baseConfig);
 
 		const poolLogs = logSpy.mock.calls.filter(
-			(c) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
+			(c: any) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
 		);
 		expect(poolLogs.length).toBe(0);
 
@@ -67,7 +67,7 @@ describe('Debug Flag', () => {
 
 		// Worker pool should have logged the spawning message
 		const poolLogs = logSpy.mock.calls.filter(
-			(c) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
+			(c: any) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
 		);
 		expect(poolLogs.length).toBeGreaterThan(0);
 
@@ -100,7 +100,7 @@ describe('Debug Flag', () => {
 
 		// Either path should have been triggered
 		if (initCalls.length > 0) {
-			expect(initCalls[0][0].config.debug).toBe(true);
+			expect((initCalls[0][0] as any).config.debug).toBe(true);
 		} else {
 			// Surgical path: callback toggle doesn't re-send full config,
 			// but new shadow pool workers (if spawned) should have debug
@@ -195,7 +195,7 @@ describe('Debug Flag', () => {
 
 		// Error should NOT appear in console.error
 		const poolErrors = errorSpy.mock.calls.filter(
-			(c) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
+			(c: any) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
 		);
 		expect(poolErrors.length).toBe(0);
 
@@ -213,7 +213,7 @@ describe('Debug Flag', () => {
 
 		// Error SHOULD appear in console.error
 		const poolErrors = errorSpy.mock.calls.filter(
-			(c) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
+			(c: any) => typeof c[0] === 'string' && c[0].includes('[WorkerPool]')
 		);
 		expect(poolErrors.length).toBeGreaterThan(0);
 
