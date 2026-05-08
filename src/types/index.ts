@@ -124,8 +124,6 @@ export interface PiperWorkerConfig {
 	instanceId?: number;
   /** Optional boolean flag to enable loading of the 'piper-callback.js' worker sidecar. */
   useCallback?: boolean;
-  modelSha256?: string;
-  configSha256?: string;
   /** Global default speaker ID for this worker instance. */
   defaultSpeakerId?: number;
 }
@@ -135,18 +133,10 @@ export interface PiperWorkerConfig {
  */
 export interface FarmConfig {
 	modelId: string;
-  /** Optional URLs for the ONNX model and config. */
-  modelUrls?: {
-    onnx: string;
-    config: string;
-  };
   /** Total number of worker instances to use for parallel synthesis. Defaults to 2. */
 	cpuInstances?: number;
   /** Optional boolean flag to enable off-thread processing via the 'piper-callback.js' worker sidecar. */
   useCallback?: boolean;
-  /** SHA-256 hashes for model integrity verification. */
-  modelSha256?: string;
-  configSha256?: string;
   /** Optional progress callback fired during model download. Receives a snapshot of the download state. */
   onProgress?: (state: DownloadState) => void;
   /** Global default speaker ID for all workers in the farm. */
@@ -251,8 +241,6 @@ export interface DownloadController {
   /** Start or retry a model download. Deduplicates by modelId. */
   request(
     modelId: string,
-    urls: { onnx: string; config: string },
-    expectedSha256?: { onnx?: string; config?: string },
     options?: { onProgress?: (state: DownloadState) => void }
   ): Promise<void>;
   /** Cancel an in-flight download and remove from queue. Does not touch OPFS (RAM-first: nothing is written until verified). */

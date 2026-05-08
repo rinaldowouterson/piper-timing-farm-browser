@@ -53,7 +53,7 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
   return {
     async init(config: FarmConfig) {
       const transitionId = ++lastTransitionId;
-      const { modelId, modelUrls, useCallback } = config;
+      const { modelId, useCallback } = config;
 
       // 0. Ensure Service Worker is active and controlling the page
       if (typeof window !== 'undefined') {
@@ -61,28 +61,21 @@ export function createPiperProvider(): Omit<PiperWorkerFarm, 'reinit'> & {
       }
 
       // 1. Resolve model metadata from the model cards via the Service Worker
+      // The SW SHA-256 verifies piper-model-cards.json before responding.
       const modelCardsResponse = await fetch('/piper-gate/infra/piper-model-cards.json');
       if (!modelCardsResponse.ok) {
         throw new Error(`Model cards fetch failed: ${modelCardsResponse.status}`);
       }
       const models: PiperModelDefinition[] = await modelCardsResponse.json();
       const modelEntry = models.find(m => m.id === modelId);
-      const onnxUrl = modelUrls?.onnx || modelEntry?.modelUrl;
-      const jsonUrl = modelUrls?.config || modelEntry?.configUrl;
-
-      if (!onnxUrl || !jsonUrl) throw new Error(`Model urls missing for ${modelId}`);
 
       loadingModelId = modelId;
       
       // 2. Download & Verify via the Service Worker gateway
+      // URL and SHA-256 resolution is handled exclusively by the Service Worker.
       try {
         await downloader.request(
-          modelId, 
-          { onnx: onnxUrl, config: jsonUrl },
-          { 
-            onnx: config.modelSha256 || modelEntry?.modelSha256, 
-            config: config.configSha256 || modelEntry?.configSha256 
-          },
+          modelId,
           { onProgress: config.onProgress }
         );
       } catch (err) {

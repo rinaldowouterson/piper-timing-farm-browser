@@ -343,7 +343,8 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
 
 /**
  * Resolves voice assets (ONNX models and configs).
- * SHA-256 lookup: model cards registry → request headers → HF API.
+ * SHA-256 lookup: model cards registry only.
+ * Source URL lookup: model cards registry only.
  */
 async function resolveVoiceAsset(filename: string, request: Request): Promise<Response> {
   // Parse filename: "modelId.onnx" or "modelId.onnx.json"
@@ -355,39 +356,18 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
   // 0. Ensure model cards are resolved (populates dynamic registries)
   await resolveVoiceRegistries();
 
-  // 1. Get expected SHA-256
-  let expectedSha256: string | null = null;
-
-  // Check model cards derived registry first
+  // 1. Get expected SHA-256 from the verified model cards registry
   const voiceEntry = voiceSha256Registry.get(modelId);
-  if (voiceEntry) {
-    expectedSha256 = extension === 'onnx' ? voiceEntry.onnx : voiceEntry.config;
-  }
+  const expectedSha256 = voiceEntry
+    ? (extension === 'onnx' ? voiceEntry.onnx : voiceEntry.config)
+    : null;
 
-  // If not in registry, try to get from request headers (custom URL case)
-  // The consumer may pass expected SHA-256 via custom header
-  if (!expectedSha256) {
-    const headerHash = request.headers.get(`x-piper-sha256-${extension}`);
-    if (headerHash) {
-      expectedSha256 = headerHash;
-    }
-  }
-
-  // If still no SHA-256, try HF API lookup for custom URLs
-  if (!expectedSha256) {
-    // Check if there's a custom URL in the request
-    const customUrlHeader = request.headers.get(`x-piper-url-${extension}`);
-    if (customUrlHeader) {
-      expectedSha256 = await fetchHFSha256(customUrlHeader);
-    }
-  }
-
-  // SHA-256 is mandatory — reject if we can't verify
+  // SHA-256 is mandatory — reject if model is not in registry
   if (!expectedSha256) {
     console.error(`[piper-gate] No SHA-256 available for voice: ${filename}`);
     return new Response(
       `[piper-gate] SHA-256 required for voice asset: ${filename}. ` +
-      `Provide via x-piper-sha256-${extension} header or use a registered model.`,
+      `Model must be present in piper-model-cards.json.`,
       { status: 403 }
     );
   }
@@ -405,22 +385,11 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
     }
   }
 
-  // 3. Determine source URL
-  let sourceUrl: string | null = null;
-
-  // Check model cards derived URL registry
+  // 3. Determine source URL from model cards registry
   const urlEntry = voiceUrlRegistry.get(modelId);
-  if (urlEntry) {
-    sourceUrl = extension === 'onnx' ? urlEntry.onnx : urlEntry.config;
-  }
-
-  // Check custom URL header
-  if (!sourceUrl) {
-    const customUrlHeader = request.headers.get(`x-piper-url-${extension}`);
-    if (customUrlHeader) {
-      sourceUrl = customUrlHeader;
-    }
-  }
+  const sourceUrl = urlEntry
+    ? (extension === 'onnx' ? urlEntry.onnx : urlEntry.config)
+    : null;
 
   if (!sourceUrl) {
     return new Response(`[piper-gate] No source URL for voice: ${filename}`, { status: 404 });
@@ -549,30 +518,7 @@ function extractHFRepoPath(url: string): { repo: string; revision: string; path:
   return null;
 }
 
-/**
- * Fetches SHA-256 hash from HuggingFace API.
- * The HF API returns file metadata including lfs.oid (SHA-256 hash).
- */
-async function fetchHFSha256(url: string): Promise<string | null> {
-  const hfInfo = extractHFRepoPath(url);
-  if (!hfInfo) return null;
 
-  try {
-    const pathParts = hfInfo.path.split('/');
-    const filename = pathParts.pop() || '';
-    const dirPath = pathParts.join('/');
-
-    const apiUrl = `https://huggingface.co/api/models/${hfInfo.repo}/tree/${hfInfo.revision}/${dirPath}`;
-    const response = await fetch(apiUrl);
-    if (!response.ok) return null;
-
-    const files: Array<{ path: string; lfs?: { oid: string } }> = await response.json();
-    const fileMeta = files.find(f => f.path === hfInfo.path || f.path.endsWith(filename));
-    return fileMeta?.lfs?.oid || null;
-  } catch {
-    return null;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // OPFS Helpers

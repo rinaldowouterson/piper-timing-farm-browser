@@ -11,8 +11,6 @@ interface DownloadEntry {
   resolve: () => void;
   /** Reject the download promise. Accepts unknown to match catch clause semantics. */
   reject: (e: unknown) => void;
-  urls: { onnx: string; config: string };
-  expectedSha256?: { onnx?: string; config?: string };
   options?: { onProgress?: (file: DownloadState) => void };
 }
 
@@ -90,25 +88,12 @@ export function createAssetDownloadController(): DownloadController {
       // The Service Worker intercepts these fetch calls and handles:
       // 1. Check OPFS cache → verify SHA-256 → return if valid
       // 2. If missing/corrupted: fetch from source → verify → write to OPFS → return
-      // 
-      // We pass SHA-256 and custom URLs via headers for non-registered models.
+      //
+      // URL and SHA-256 resolution is the Service Worker's responsibility.
+      // The controller sends only the cache-download signal.
       const headers: HeadersInit = {
         'x-piper-cache-download': 'true'
       };
-
-      if (entry.expectedSha256?.onnx) {
-        headers['x-piper-sha256-onnx'] = entry.expectedSha256.onnx;
-      }
-      if (entry.expectedSha256?.config) {
-        headers['x-piper-sha256-config'] = entry.expectedSha256.config;
-      }
-      // For custom URLs (not in registry), pass the source URL
-      if (!entry.urls.onnx.startsWith('https://huggingface.co/rinaldow/')) {
-        headers['x-piper-url-onnx'] = entry.urls.onnx;
-      }
-      if (!entry.urls.config.startsWith('https://huggingface.co/rinaldow/')) {
-        headers['x-piper-url-config'] = entry.urls.config;
-      }
 
       // Download config first
       const configResponse = await fetch(`/piper-gate/voices/${modelId}.onnx.json`, {
@@ -171,7 +156,7 @@ export function createAssetDownloadController(): DownloadController {
   }
 
   return {
-    request(modelId, urls, expectedSha256, options) {
+    request(modelId, options) {
       const existing = registry.get(modelId);
       
       // Return existing promise if already and not in a terminal failure state
@@ -208,8 +193,6 @@ export function createAssetDownloadController(): DownloadController {
         promise,
         resolve: resolveFunc,
         reject: rejectFunc,
-        urls,
-        expectedSha256,
         options,
       };
 

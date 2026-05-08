@@ -50,21 +50,12 @@ describe('Download Controller FIFO (Option B)', () => {
         });
 
         // Start 3 downloads simultaneously
-        const p1 = controller.request('model-1', { 
-            onnx: 'https://example.com/model-1.onnx', 
-            config: 'https://example.com/model-1.onnx.json' 
-        }, { onnx: 'hash', config: 'hash' }).catch(e => {
+        const p1 = controller.request('model-1').catch(e => {
             console.error('model-1 failed:', e);
             throw e;
         });
-        const p2 = controller.request('model-2', { 
-            onnx: 'https://example.com/model-2.onnx', 
-            config: 'https://example.com/model-2.onnx.json' 
-        }, { onnx: 'hash', config: 'hash' });
-        const p3 = controller.request('model-3', { 
-            onnx: 'https://example.com/model-3.onnx', 
-            config: 'https://example.com/model-3.onnx.json' 
-        }, { onnx: 'hash', config: 'hash' });
+        const p2 = controller.request('model-2');
+        const p3 = controller.request('model-3');
 
         // Check initial state
         const state1 = controller.getState();
@@ -110,14 +101,8 @@ describe('Download Controller FIFO (Option B)', () => {
             };
         });
 
-        const pFail = controller.request('model-fail', { 
-            onnx: 'https://example.com/model-fail.onnx', 
-            config: 'https://example.com/model-fail.onnx.json' 
-        }, { onnx: 'hash', config: 'hash' }).catch(() => {});
-        const pSuccess = controller.request('model-success', { 
-            onnx: 'https://example.com/model-success.onnx', 
-            config: 'https://example.com/model-success.onnx.json' 
-        }, { onnx: 'hash', config: 'hash' });
+        const pFail = controller.request('model-fail').catch(() => {});
+        const pSuccess = controller.request('model-success');
 
         try { await pFail; } catch {}
         await pSuccess;
@@ -134,8 +119,8 @@ describe('Download Controller FIFO (Option B)', () => {
 
         mockFetch.mockImplementation(() => new Promise(() => {})); // Hangs
 
-        const p1 = controller.request('model-1', { onnx: 'url1.onnx', config: 'url1.json' }).catch(() => {});
-        const p2 = controller.request('model-2', { onnx: 'url2.onnx', config: 'url2.json' }).catch(() => {});
+        const p1 = controller.request('model-1').catch(() => {});
+        const p2 = controller.request('model-2').catch(() => {});
 
         expect(controller.getState().has('model-2')).toBe(true);
         

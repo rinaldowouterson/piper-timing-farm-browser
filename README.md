@@ -236,7 +236,6 @@ Initializes or re-initializes the farm.
 | `cpuInstances` | `number` | `2` | Number of worker instances. |
 | `useCallback` | `boolean` | `false` | Enable worker sidecar callbacks. |
 | `defaultSpeakerId`| `number` | `0` | Global default speaker ID. |
-| `modelUrls` | `object` | — | Custom `{ onnx, config }` URLs. |
 | `onProgress` | `function`| — | Model download progress callback. |
 
 #### `synthesize(text: string, options?: SynthesizeOptions): Promise<AudioSynthesisResult>`

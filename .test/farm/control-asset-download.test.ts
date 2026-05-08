@@ -63,13 +63,7 @@ describe('Download Controller', () => {
     it('should track download state through lifecycle', async () => {
         const controller = createAssetDownloadController();
 
-        await controller.request('model-a', {
-            onnx: 'https://example.com/model-a.onnx',
-            config: 'https://example.com/model-a.onnx.json'
-        }, {
-            config: 'test-config-sha256',
-            onnx: 'test-onnx-sha256'
-        });
+        await controller.request('model-a');
 
         const state = controller.getState();
         const modelState = state.get('model-a');
@@ -83,20 +77,8 @@ describe('Download Controller', () => {
     it('should deduplicate requests for the same model', async () => {
         const controller = createAssetDownloadController();
 
-        const p1 = controller.request('model-a', {
-            onnx: 'https://example.com/model-a.onnx',
-            config: 'https://example.com/model-a.onnx.json'
-        }, {
-            config: 'test-config-sha256',
-            onnx: 'test-onnx-sha256'
-        });
-        const p2 = controller.request('model-a', {
-            onnx: 'https://example.com/model-a.onnx',
-            config: 'https://example.com/model-a.onnx.json'
-        }, {
-            config: 'test-config-sha256',
-            onnx: 'test-onnx-sha256'
-        });
+        const p1 = controller.request('model-a');
+        const p2 = controller.request('model-a');
 
         // Same promise returned
         expect(p1).toBe(p2);
@@ -119,13 +101,7 @@ describe('Download Controller', () => {
         });
 
         // Catch the rejection that cancel() will trigger
-        const promise = controller.request('model-a', {
-            onnx: 'https://example.com/model-a.onnx',
-            config: 'https://example.com/model-a.onnx.json'
-        }, {
-            config: 'test-config-sha256',
-            onnx: 'test-onnx-sha256'
-        }).catch(() => {});
+        const promise = controller.request('model-a').catch(() => {});
 
         // Cancel before download completes
         await controller.cancel('model-a');
@@ -149,20 +125,8 @@ describe('Download Controller', () => {
         });
 
         // Catch rejections that cancelAll() will trigger
-        const p1 = controller.request('model-a', {
-            onnx: 'https://example.com/model-a.onnx',
-            config: 'https://example.com/model-a.onnx.json'
-        }, {
-            config: 'test-config-sha256',
-            onnx: 'test-onnx-sha256'
-        }).catch(() => {});
-        const p2 = controller.request('model-b', {
-            onnx: 'https://example.com/model-b.onnx',
-            config: 'https://example.com/model-b.onnx.json'
-        }, {
-            config: 'test-config-sha256',
-            onnx: 'test-onnx-sha256'
-        }).catch(() => {});
+        const p1 = controller.request('model-a').catch(() => {});
+        const p2 = controller.request('model-b').catch(() => {});
 
         await controller.cancelAll();
         await Promise.allSettled([p1, p2]);
@@ -175,13 +139,7 @@ describe('Download Controller', () => {
     it('should remove state map after cancellation for memory efficiency', async () => {
         const controller = createAssetDownloadController();
 
-        await controller.request('model-a', {
-            onnx: 'https://example.com/model-a.onnx',
-            config: 'https://example.com/model-a.onnx.json'
-        }, {
-            config: 'test-config-sha256',
-            onnx: 'test-onnx-sha256'
-        });
+        await controller.request('model-a');
 
         await controller.cancel('model-a');
 
@@ -219,14 +177,6 @@ describe('Download Controller', () => {
         // Start the download request
         const requestPromise = controller.request(
             'model-progress',
-            {
-                onnx: 'https://example.com/model-progress.onnx',
-                config: 'https://example.com/model-progress.onnx.json'
-            },
-            {
-                config: 'test-config-sha256',
-                onnx: 'test-onnx-sha256'
-            },
             { onProgress }
         );
 
