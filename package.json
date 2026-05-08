@@ -63,7 +63,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:vitals": "vitest run .test/vitals.test.ts",
-    "test:provision": "npm run build && rm -rf tmp-test-provision && mkdir tmp-test-provision && cd tmp-test-provision && touch package.json && node ../dist/cli.js init && node ../dist/cli.js init custom-target && cd ..",
+    "test:provision": "npm run build && npx vitest run .test/cli/provision-integrity.test.ts",
     "prepublishOnly": "npx tsx scripts/verify-release-readiness.ts"
   },
   "dependencies": {
