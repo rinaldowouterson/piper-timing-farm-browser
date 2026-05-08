@@ -334,6 +334,7 @@ The Service Worker provides detailed logs to help you track asset resolution:
 - `[piper-gate] [Cache Hit]`: Asset verified and served from OPFS.
 - `[piper-gate] [Stale Cache]`: Detected an integrity mismatch (e.g., from an older build). The entry is deleted and re-fetched.
 - `[piper-gate] [Cache Restored]`: Asset successfully re-downloaded, verified, and saved to OPFS.
+- `[piper-gate] [Cache Miss]`: Asset verified but not cached (OPFS storage issue, e.g., quota exceeded). The asset is still delivered to the caller.
 
 ### Path Deviation Diagnostics
 

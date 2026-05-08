@@ -55,8 +55,8 @@ const OPFS_VOICES_DIR = 'voices';
  * Updated automatically by: scripts/inject-model-cards-hash.ts
  */
 
-const PIPER_MODEL_CARDS_SHA256 = '270aa371f9f528df0363f012b8d878267bf41531ff0a6008fb26e552dceec654';
-const PROCESS_PIPER_SYNTHESIS_WORKER_SHA256 = '64c3748cd696f83d73e16a1e191c9a45ce1c483cbce97742a68fc7631ab97a2e';
+const PIPER_MODEL_CARDS_SHA256 = '1111111111111111111111111111111111111111111111111111111111111111'; // Patched post-build by scripts/inject-model-cards-hash.ts
+const PROCESS_PIPER_SYNTHESIS_WORKER_SHA256 = '0000000000000000000000000000000000000000000000000000000000000000'; // Patched post-build by scripts/inject-worker-hash.ts
 const PIPER_CALLBACK_SHA256 = ''; // User-provided; integrity must be set by the consumer at runtime.
 
 /** Infra asset SHA-256 hashes (ORT WASM, Piper phonemize) — hardcoded for security */
