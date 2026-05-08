@@ -296,8 +296,12 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
       const data = await localResponse.arrayBuffer();
       const isValid = await verifySha256(data, expectedSha256);
       if (isValid) {
-        await writeToOpfs(OPFS_INFRA_DIR, filename, data);
-        console.log(`[piper-gate] [Cache Restored] '${filename}' successfully re-downloaded, verified, and persisted to OPFS.`);
+        const cached = await writeToOpfs(OPFS_INFRA_DIR, filename, data);
+        if (cached) {
+          console.log(`[piper-gate] [Cache Restored] '${filename}' verified and cached.`);
+        } else {
+          console.warn(`[piper-gate] [Cache Miss] '${filename}' verified but not cached (storage issue).`);
+        }
         return createVerifiedResponse(data, { filename });
       } else {
         console.error(`[piper-gate] Local infra asset integrity mismatch: ${filename}`);
@@ -327,8 +331,12 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
       return new Response(`[piper-gate] CDN asset integrity mismatch: ${filename}`, { status: 403 });
     }
 
-    await writeToOpfs(OPFS_INFRA_DIR, filename, data);
-    console.log(`[piper-gate] Infra asset from CDN verified: ${filename}`);
+    const cached = await writeToOpfs(OPFS_INFRA_DIR, filename, data);
+    if (cached) {
+      console.log(`[piper-gate] Infra asset from CDN verified and cached: ${filename}`);
+    } else {
+      console.warn(`[piper-gate] Infra asset from CDN verified but not cached: ${filename}`);
+    }
     return createVerifiedResponse(data, { filename });
   } catch (err: unknown) {
     console.error(`[piper-gate] CDN fetch failed for ${filename}:`, err);
@@ -481,9 +489,13 @@ async function resolveVoiceAsset(filename: string, request: Request): Promise<Re
     }
 
     // Write to OPFS
-    await writeToOpfs(OPFS_VOICES_DIR, filename, data);
+    const cached = await writeToOpfs(OPFS_VOICES_DIR, filename, data);
 
-    console.log(`[piper-gate] [Cache Restored] Voice asset '${filename}' downloaded and verified.`);
+    if (cached) {
+      console.log(`[piper-gate] [Cache Restored] Voice asset '${filename}' verified and cached.`);
+    } else {
+      console.warn(`[piper-gate] [Cache Miss] Voice asset '${filename}' verified but not cached (storage issue).`);
+    }
 
     // MEMORY FIX: If requester only wanted to trigger cache, return 204 No Content
     if (downloadForCacheOnly) {
@@ -531,12 +543,13 @@ async function readFromOpfs(directory: string, filename: string): Promise<ArrayB
     const handle = await dir.getFileHandle(filename, { create: false });
     const file = await handle.getFile();
     return await file.arrayBuffer();
-  } catch {
+  } catch (err: unknown) {
+    console.warn(`[piper-gate] OPFS read failed for ${directory}/${filename}:`, err);
     return null;
   }
 }
 
-async function writeToOpfs(directory: string, filename: string, data: ArrayBuffer): Promise<void> {
+async function writeToOpfs(directory: string, filename: string, data: ArrayBuffer): Promise<boolean> {
   try {
     const root = await navigator.storage.getDirectory();
     const dir = await root.getDirectoryHandle(directory, { create: true });
@@ -544,8 +557,10 @@ async function writeToOpfs(directory: string, filename: string, data: ArrayBuffe
     const writable = await handle.createWritable();
     await writable.write(data);
     await writable.close();
+    return true;
   } catch (err: unknown) {
     console.warn(`[piper-gate] OPFS write failed for ${directory}/${filename}:`, err);
+    return false;
   }
 }
 
@@ -554,8 +569,9 @@ async function deleteFromOpfs(directory: string, filename: string): Promise<void
     const root = await navigator.storage.getDirectory();
     const dir = await root.getDirectoryHandle(directory, { create: false });
     await dir.removeEntry(filename);
-  } catch {
+  } catch (err: unknown) {
     // File doesn't exist — ignore
+    console.warn(`[piper-gate] OPFS delete failed for ${directory}/${filename}:`, err);
   }
 }
 
