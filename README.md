@@ -7,6 +7,12 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 
 ---
 
+## Live Demo
+
+Experience the engine in action at the [Piper Timing Farm Verification Console](https://rinaldowouterson.github.io/piper-timing-farm-browser-test/). This diagnostic dashboard demonstrates real-time synthesis, performance benchmarking (RTF/Latency), and Service Worker integrity verification.
+
+---
+
 ## Overview
 
 `piper-timing-farm-browser` is a TypeScript library for browser-based Text-to-Speech synthesis. It extends the Piper TTS system with the following capabilities:
@@ -24,6 +30,7 @@ A multi-threaded Text-to-Speech engine for browser applications, providing phone
 
 ## Table of Contents
 
+- [Live Demo](#live-demo)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Architecture & Asset Management](#architecture--asset-management)
