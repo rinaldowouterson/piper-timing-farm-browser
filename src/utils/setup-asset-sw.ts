@@ -6,10 +6,10 @@
  * 
  * Use `npx piper-farm init` to provision the SW to `public/` (root).
  *
- * @param swUrl - Path to the SW script. Defaults to `/control-asset-sw.js`.
- *                Override for subpath deployments (e.g. `/myapp/control-asset-sw.js`).
+ * @param swUrl - Path to the SW script. Defaults to `./control-asset-sw.js` (sibling of entry).
+ *                Override for non-standard deployments.
  */
-export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<ServiceWorkerRegistration> {
+export async function setupAssetSW(swUrl = './control-asset-sw.js'): Promise<ServiceWorkerRegistration> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
     console.warn('[setup-asset-sw] Service Worker not supported in this environment');
     return Promise.reject(new Error('SW not supported'));
@@ -21,8 +21,11 @@ export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<Serv
     return navigator.serviceWorker.ready;
   }
 
+  // Derive scope from swUrl: e.g. './control-asset-sw.js' -> './'
+  const scope = swUrl.substring(0, swUrl.lastIndexOf('/') + 1) || './';
+
   const reg = await navigator.serviceWorker.register(swUrl, {
-    scope: '/',
+    scope,
     type: 'module',
   });
 
@@ -33,6 +36,12 @@ export async function setupAssetSW(swUrl = '/control-asset-sw.js'): Promise<Serv
   // This is required for intercepting the very first fetch after registration.
   if (!navigator.serviceWorker.controller) {
     console.log('[setup-asset-sw] Waiting for Service Worker Gateway to take control...');
+    
+    // If the SW is already active, explicitly request a claim to trigger controllerchange
+    if (reg.active) {
+      reg.active.postMessage({ type: 'CLAIM' });
+    }
+
     await new Promise<void>((resolve, reject) => {
       const handler = () => {
         if (navigator.serviceWorker.controller) {

@@ -1,4 +1,5 @@
 import { setupAssetSW } from "./setup-asset-sw";
+import { GATEWAY_ROOT } from "./resolve-gateway-path";
 
 /**
  * Atomic, session-independent OPFS cache clearing.
@@ -12,7 +13,7 @@ export async function clearModelCache(): Promise<void> {
         // Ensure Service Worker Gateway is active before dispatching deletion
         await setupAssetSW().catch(() => {});
 
-        const res = await fetch('/piper-gate/voices/', { method: 'DELETE' });
+        const res = await fetch(`${GATEWAY_ROOT}voices/`, { method: 'DELETE' });
         
         if (!res.ok && res.status !== 204) {
             throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
@@ -33,7 +34,7 @@ export async function clearInfraCache(): Promise<void> {
     try {
         await setupAssetSW().catch(() => {});
 
-        const res = await fetch('/piper-gate/infra/', { method: 'DELETE' });
+        const res = await fetch(`${GATEWAY_ROOT}infra/`, { method: 'DELETE' });
 
         if (!res.ok && res.status !== 204) {
             throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);
@@ -54,7 +55,7 @@ export async function deletePiperModel(modelId: string): Promise<void> {
     try {
         await setupAssetSW().catch(() => {});
 
-        const res = await fetch(`/piper-gate/voices/${modelId}`, { method: 'DELETE' });
+        const res = await fetch(`${GATEWAY_ROOT}voices/${modelId}`, { method: 'DELETE' });
 
         if (!res.ok && res.status !== 204) {
             throw new Error(`Gateway returned ${res.status}: ${res.statusText}`);

@@ -105,18 +105,30 @@ self.onmessage = async (e: MessageEvent<PiperWorkerMessageIn>) => {
 };
 
 // ---------------------------------------------------------------------------
+// Dynamic Path Resolution (Indifferent to Deployment Root)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derives the base deployment path from the Worker's own location.
+ * Since the worker is provisioned to 'piper-gate/infra/worker.js',
+ * the base is two levels up.
+ */
+const BASE = new URL('../../', self.location.href).href;
+const GATEWAY_ROOT = `${BASE}piper-gate/`;
+
+// ---------------------------------------------------------------------------
 // Default Asset Paths (Service Worker Gateway)
 // ---------------------------------------------------------------------------
 
 const ONNX_ASSET_URLS = {
-  wasm: '/piper-gate/infra/',
-  mjs: '/piper-gate/infra/ort.wasm.min.mjs',
+  wasm: `${GATEWAY_ROOT}infra/`,
+  mjs: `${GATEWAY_ROOT}infra/ort.wasm.min.mjs`,
 };
 
 const PIPER_ASSET_URLS = {
-  piperData: '/piper-gate/infra/piper_phonemize.data',
-  piperJs:   '/piper-gate/infra/piper_phonemize.js',
-  piperWasm: '/piper-gate/infra/piper_phonemize.wasm',
+  piperData: `${GATEWAY_ROOT}infra/piper_phonemize.data`,
+  piperJs:   `${GATEWAY_ROOT}infra/piper_phonemize.js`,
+  piperWasm: `${GATEWAY_ROOT}infra/piper_phonemize.wasm`,
 };
 
 // --- Initialization ---
@@ -135,13 +147,13 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     // Workers are "Pure Consumers" — no direct OPFS access needed.
 
     // Load Model Config
-    const configRes = await fetch(`/piper-gate/voices/${modelId}.onnx.json`);
+    const configRes = await fetch(`${GATEWAY_ROOT}voices/${modelId}.onnx.json`);
     if (!configRes.ok) throw new Error(`Failed to fetch model config: ${configRes.statusText}`);
     const configText = await configRes.text();
     modelConfig = JSON.parse(configText) as ModelConfig;
 
     // Load ONNX Model
-    const modelRes = await fetch(`/piper-gate/voices/${modelId}.onnx`);
+    const modelRes = await fetch(`${GATEWAY_ROOT}voices/${modelId}.onnx`);
     if (!modelRes.ok) throw new Error(`Failed to fetch model: ${modelRes.statusText}`);
     const modelBuffer = await modelRes.arrayBuffer();
 

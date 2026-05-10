@@ -20,7 +20,7 @@ describe('Sovereign Cache Management', () => {
 
             await clearModelCache();
 
-            expect(mockFetch).toHaveBeenCalledWith('/piper-gate/voices/', { method: 'DELETE' });
+            expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/piper-gate/voices/'), { method: 'DELETE' });
         });
 
         it('should accept 204 No Content as success', async () => {
@@ -52,7 +52,7 @@ describe('Sovereign Cache Management', () => {
 
             await deletePiperModel('en_US-lessac-medium');
 
-            expect(mockFetch).toHaveBeenCalledWith('/piper-gate/voices/en_US-lessac-medium', { method: 'DELETE' });
+            expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/piper-gate/voices/en_US-lessac-medium'), { method: 'DELETE' });
         });
 
         it('should accept 204 No Content as success', async () => {

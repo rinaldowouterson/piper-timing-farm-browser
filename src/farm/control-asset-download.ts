@@ -1,4 +1,5 @@
 import type { DownloadState, DownloadController } from "../types";
+import { GATEWAY_ROOT } from "../utils/resolve-gateway-path";
 
 /**
  * Internal entry for tracking a download in the registry.
@@ -96,7 +97,7 @@ export function createAssetDownloadController(): DownloadController {
       };
 
       // Download config first
-      const configResponse = await fetch(`/piper-gate/voices/${modelId}.onnx.json`, {
+      const configResponse = await fetch(`${GATEWAY_ROOT}voices/${modelId}.onnx.json`, {
         signal: entry.controller.signal,
         headers,
       });
@@ -108,7 +109,7 @@ export function createAssetDownloadController(): DownloadController {
       if (entry.controller.signal.aborted) return;
 
       // Download ONNX model second
-      const onnxResponse = await fetch(`/piper-gate/voices/${modelId}.onnx`, {
+      const onnxResponse = await fetch(`${GATEWAY_ROOT}voices/${modelId}.onnx`, {
         signal: entry.controller.signal,
         headers,
       });

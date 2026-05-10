@@ -84,7 +84,7 @@ describe('CLI > Unified Framework Orchestration', () => {
         globalThis.fetch = mockFetch;
 
         await farm.clearPiperModelCache();
-        expect(mockFetch).toHaveBeenCalledWith('/piper-gate/voices/', { method: 'DELETE' });
+        expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/piper-gate/voices/'), { method: 'DELETE' });
         expect(farm.isInitialized()).toBe(false);
         
         globalThis.fetch = originalFetch;

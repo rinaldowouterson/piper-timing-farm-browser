@@ -5,6 +5,7 @@ import type {
   PiperWorkerConfig,
   WorkerLogPayload
 } from "../types";
+import { GATEWAY_ROOT } from "../utils/resolve-gateway-path";
 
 /**
  * Worker Pool Controller.
@@ -377,7 +378,7 @@ function createWorker(
   onCrash: (id: number) => void
 ): WorkerState {
   // Use Vite-safe worker instantiation if possible, otherwise use new URL
-  const worker = new Worker('/piper-gate/infra/process-piper-synthesis.worker.js', {
+  const worker = new Worker(`${GATEWAY_ROOT}infra/process-piper-synthesis.worker.js`, {
     type: "module",
     /* @vite-ignore */
     name: `PiperWorker-${id}`

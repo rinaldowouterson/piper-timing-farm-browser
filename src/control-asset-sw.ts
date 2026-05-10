@@ -20,6 +20,17 @@ import { downloadFile } from "@huggingface/hub";
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 // ---------------------------------------------------------------------------
+// Dynamic Path Resolution (Indifferent to Deployment Root)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derives the base deployment path from the Service Worker's own location.
+ * If SW is at '/repo/control-asset-sw.js', BASE is '/repo/'.
+ */
+const BASE = sw.location.pathname.substring(0, sw.location.pathname.lastIndexOf('/') + 1);
+const GATEWAY_ROOT = `${BASE}piper-gate/`;
+
+// ---------------------------------------------------------------------------
 // SHA-256 Verification (Browser-only: crypto.subtle always available)
 // ---------------------------------------------------------------------------
 
@@ -69,6 +80,13 @@ const debugChannel = new BroadcastChannel('piper-gate-debug');
 debugChannel.onmessage = (e: MessageEvent<{ debug: boolean }>) => {
   DEBUG_GATE = e.data.debug;
 };
+
+// Handle explicit claim requests from the main thread to avoid activation timeouts
+sw.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'CLAIM') {
+    sw.clients.claim();
+  }
+});
 
 function gateLog(level: 'log' | 'warn' | 'error', message: string, ...args: unknown[]) {
   if (!DEBUG_GATE && level === 'log') return;
@@ -222,23 +240,23 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
   const url = new URL(event.request.url);
 
   // Diagnostic: Catch Piper assets requested via non-standard paths
-  if (url.origin === sw.location.origin && !url.pathname.startsWith('/piper-gate/')) {
+  if (url.origin === sw.location.origin && !url.pathname.startsWith(GATEWAY_ROOT)) {
     const filename = url.pathname.split('/').pop() || '';
     if (isPiperAsset(filename)) {
       gateLog('warn',
         `[piper-gate] [Path Deviation] Detected request for Piper asset '${filename}' at non-gateway path: ${url.pathname}. ` +
         `This request bypasses Service Worker integrity verification and OPFS caching. ` +
-        `Please update the requester to use: /piper-gate/.../${filename}`
+        `Please update the requester to use: ${GATEWAY_ROOT}.../${filename}`
       );
     }
   }
 
 
-  // Only intercept same-origin /piper-gate/* requests
+  // Only intercept same-origin GATEWAY_ROOT/* requests
   if (url.origin !== sw.location.origin) return;
-  if (!url.pathname.startsWith('/piper-gate/')) return;
+  if (!url.pathname.startsWith(GATEWAY_ROOT)) return;
 
-  const assetPath = url.pathname.slice('/piper-gate/'.length);
+  const assetPath = url.pathname.slice(GATEWAY_ROOT.length);
   if (!assetPath) return;
 
   // OPFS Deletion Coordination
@@ -309,7 +327,7 @@ async function resolveInfraAsset(filename: string): Promise<Response> {
 
   // 2. Try local server
   try {
-    const localResponse = await fetch(`/piper-gate/infra/${filename}`);
+    const localResponse = await fetch(`${GATEWAY_ROOT}infra/${filename}`);
     if (localResponse.ok) {
       const data = await localResponse.arrayBuffer();
       const isValid = await verifySha256(data, expectedSha256);

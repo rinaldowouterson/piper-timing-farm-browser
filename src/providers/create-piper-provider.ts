@@ -11,6 +11,7 @@ import { createPiperWorkerFarm } from "../farm/create-piper-worker-farm";
 import { createAssetDownloadController } from "../farm/control-asset-download";
 import { clearModelCache, deletePiperModel, clearInfraCache } from "../utils/resolve-cache-clearing";
 import { setupAssetSW } from "../utils/setup-asset-sw";
+import { GATEWAY_ROOT } from "../utils/resolve-gateway-path";
 
 /**
  * Piper Provider with background model switching.
@@ -62,7 +63,7 @@ export function createPiperProvider(options?: { debug?: boolean }): Omit<PiperWo
 
       // 1. Resolve model metadata from the model cards via the Service Worker
       // The SW SHA-256 verifies piper-model-cards.json before responding.
-      const modelCardsResponse = await fetch('/piper-gate/infra/piper-model-cards.json');
+      const modelCardsResponse = await fetch(`${GATEWAY_ROOT}infra/piper-model-cards.json`);
       if (!modelCardsResponse.ok) {
         throw new Error(`Model cards fetch failed: ${modelCardsResponse.status}`);
       }
