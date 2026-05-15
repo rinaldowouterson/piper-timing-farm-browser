@@ -197,7 +197,7 @@ For post-synthesis processing (e.g., viseme mapping), the architecture supports 
 
 Enabling `useCallback: true` requires a verified `[root]/piper-gate/infra/piper-callback.js` module that exports a mandatory `onSynthesisComplete` function. 
 
-Use `npx piper-farm hash [root]/piper-gate/infra/piper-callback.js` to generate the integrity hash and update the `INFRA_SHA256_REGISTRY` in the Service Worker.
+Use `npx piper-farm hash [root]/piper-gate/infra/piper-callback.js` to generate the integrity hash and update the `INFRA_SHA256_REGISTRY` in the Service Worker. (Note: In minified builds, search for the `"piper-callback.js"` string to find and update its associated hash value).
 
 ```javascript
 // [ public | static ]/piper-gate/infra/piper-callback.js
@@ -220,7 +220,7 @@ Use this if you have already run `npx piper-farm init` and want to add models di
 2. **Synchronize Trust Anchor**: 
    - Calculate the SHA-256 hash of your updated `piper-model-cards.json`.
    - Open the provisioned `[static-root]/control-asset-sw.js`.
-   - Update the `PIPER_MODEL_CARDS_SHA256` constant with the new hash to prevent integrity errors.
+   - Update the `PIPER_MODEL_CARDS_SHA256` constant with the new hash. (Note: In minified builds, search for the `"piper-model-cards.json"` string directly, as constant names will be shortened to single letters like `R`).
 
 ### Path 2B: Build from Source (Pre-Distribution)
 Use this if you are forking the library to create a custom distribution with baked-in models.
