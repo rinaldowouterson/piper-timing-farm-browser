@@ -92,10 +92,10 @@ export interface PendingRequest {
 	speed: number;
 	volume: number;
 	speakerId: number;
-	resolve: (result: AudioSynthesisResult & { callbackResult?: any }) => void;
+	resolve: (result: AudioSynthesisResult & { callbackResult?: unknown }) => void;
 	reject: (reason: Error) => void;
 	// If completed but waiting for FIFO order
-	result?: AudioSynthesisResult & { callbackResult?: any };
+	result?: AudioSynthesisResult & { callbackResult?: unknown };
   /** The model ID that was active when this request was processed. */
   modelId?: string;
   /** Tracks the number of times this specific request caused a worker crash. */
@@ -165,7 +165,7 @@ export interface PiperWorkerFarm {
 	synthesize(
 		text: string,
 		options?: SynthesizeOptions
-	): Promise<AudioSynthesisResult & { callbackResult?: any }>;
+	): Promise<AudioSynthesisResult & { callbackResult?: unknown }>;
 	cancelSynthesis(requestId: string): void;
 	cancelAllSynthesis(): void;
 	terminate(): void;
@@ -207,7 +207,7 @@ export type PiperWorkerMessageOut =
 	| { type: "ready"; instanceId: number; configCounter: number }
 	| { type: "error"; instanceId: number; error: string; originalRequest?: PiperWorkerMessageIn }
   | { type: "log"; payload: WorkerLogPayload }
-	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: any }
+	| { type: "success"; instanceId: number; requestId: string; result: AudioSynthesisResult; callbackResult?: unknown }
   | { type: "callback-on"; instanceId: number; configCounter: number }
   | { type: "callback-off"; instanceId: number; configCounter: number }
   | { type: "callback-failed"; instanceId: number; error: string };

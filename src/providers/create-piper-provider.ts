@@ -1,7 +1,6 @@
 import type { 
   PiperWorkerFarm, 
   FarmConfig, 
-  AudioSynthesisResult,
   DownloadState,
   RequestStatusPayload,
   WorkerLogPayload,
@@ -34,9 +33,14 @@ export function createPiperProvider(options?: { debug?: boolean }): Omit<PiperWo
   let farm: PiperWorkerFarm | null = null;
   let activeModelId: string | null = null;
   let activeNumSpeakers: number = 1;
+  
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let activeCallbackPath: string | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let activeDefaultSpeakerId: number | undefined = undefined;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let loadingModelId: string | null = null;
+  
   let lastTransitionId = 0;
   const downloader = createAssetDownloadController();
   const queueListeners = new Set<(status: RequestStatusPayload) => void>();

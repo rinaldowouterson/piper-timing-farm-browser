@@ -21,7 +21,7 @@ let ortInstance: OrtModule | null = null;
 let phonemizerModule: PiperPhonemizerModule | null = null;
 let modelConfig: ModelConfig | null = null;
 let instanceId = -1;
-let deviceLabel = "CPU";
+const deviceLabel = "CPU";
 let currentModelId = "";
 let defaultSpeakerId = 0;
 let currentConfigCounter = -1;
@@ -162,7 +162,7 @@ export async function setupPiperWorker(config: PiperWorkerConfig) {
     // We simply fetch and import — SW guarantees integrity.
     const ortRes = await fetch(ONNX_ASSET_URLS.mjs);
     if (!ortRes.ok) throw new Error(`Failed to fetch ORT glue: ${ortRes.statusText}`);
-    const ortCode = await ortRes.text();
+    const _ortCode = await ortRes.text();
 
     // Dynamic import — browser cache serves the verified content from SW
     const ortModule = await import(/* @vite-ignore */ ONNX_ASSET_URLS.mjs);

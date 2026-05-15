@@ -61,9 +61,14 @@ const OPFS_INFRA_DIR = 'infra';
 const OPFS_VOICES_DIR = 'voices';
 
 /**
- * Single hardcoded hash — the only trust anchor in the Service Worker.
- * All voice model integrity is derived from the verified model cards.
- * Updated automatically by: scripts/inject-model-cards-hash.ts
+ * Primary SHA-256 trust anchors for the Service Worker.
+ * These hashes are patched post-build to verify the integrity of the bootstrap assets:
+ * 1. PIPER_MODEL_CARDS_SHA256: Anchors the voice registry (derived integrity for all models).
+ * 2. PROCESS_PIPER_SYNTHESIS_WORKER_SHA256: Anchors the core synthesis worker script.
+ *
+ * Updated automatically by: 
+ * - scripts/inject-model-cards-hash.ts
+ * - scripts/inject-worker-hash.ts
  */
 
 const PIPER_MODEL_CARDS_SHA256 = '1111111111111111111111111111111111111111111111111111111111111111'; // Patched post-build by scripts/inject-model-cards-hash.ts

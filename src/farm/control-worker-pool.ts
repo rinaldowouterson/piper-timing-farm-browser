@@ -1,6 +1,5 @@
 import type { 
   WorkerState, 
-  PiperWorkerMessageIn, 
   PiperWorkerMessageOut, 
   PiperWorkerConfig,
   WorkerLogPayload
@@ -115,7 +114,7 @@ export function createWorkerPool(
                 }
                 else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
               };
-              const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
+              const errHandler = (_e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
               
               const cleanup = (cb: () => void) => {
                 worker.worker.removeEventListener('message', handler);
@@ -238,7 +237,7 @@ export function createWorkerPool(
             if (msg.type === 'ready') cleanup(res);
             else if (msg.type === 'error') cleanup(() => rej(new Error(`Worker ${id} failed to initialize: ${msg.error}`)));
           };
-          const errHandler = (e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
+          const errHandler = (_e: ErrorEvent) => cleanup(() => rej(new Error(`Worker ${id} crashed during initialization`)));
           const abortHandler = () => cleanup(() => rej(new DOMException("Transition superseded by newer request", "AbortError")));
 
           const cleanup = (cb: () => void) => {
@@ -257,6 +256,7 @@ export function createWorkerPool(
       // Wait for Shadow Pool to be READY
       try {
         await Promise.all(initPromises);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (e: any) {
         if (e.name === 'AbortError') {
           // Expected rejection when superseded
@@ -399,9 +399,12 @@ function createWorker(
     }
   };
   worker.onerror = (e) => {
-    let errorMessage = "Worker crashed unexpectedly";
+    let errorMessage = `Worker ${id} crashed unexpectedly
+    `;
     if (e instanceof ErrorEvent) {
-      errorMessage = e.message || `Runtime error in ${e.filename}:${e.lineno}`;
+      errorMessage += e.message || `Runtime error in ${e.filename}:${e.lineno}`;
+      errorMessage += `
+      `;
     } else {
       errorMessage = "Worker failed to initialize or load (possible MIME mismatch or Network Error)";
     }

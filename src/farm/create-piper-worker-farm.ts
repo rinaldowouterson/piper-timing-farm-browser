@@ -1,7 +1,6 @@
 import type { 
   PiperWorkerFarm, 
   FarmConfig, 
-  AudioSynthesisResult, 
   PendingRequest, 
   PiperWorkerMessageOut,
   RequestStatusPayload,
@@ -11,7 +10,6 @@ import type {
 import { createWorkerPool } from "./control-worker-pool";
 import { clearModelCache, clearInfraCache } from "../utils/resolve-cache-clearing";
 import { transformPendingQueue } from "../utils/process-queue-transform";
-import type { PiperModelDefinition } from "../types";
 
 
 // ---------------------------------------------------------------------------
@@ -47,7 +45,7 @@ export function createPiperWorkerFarm(options?: { debug?: boolean }): PiperWorke
     logListeners.forEach(l => l(payload));
   }
 
-  function onReady(id: number) {
+  function onReady(_id: number) {
     // console.log(`Worker ${id} ready, checking queue...`);
     processQueue();
   }
